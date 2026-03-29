@@ -116,6 +116,20 @@ short_model() {
     printf "%s" "$m"
 }
 
+# ── Effort level (from settings, not in status JSON) ──
+effort=""
+settings_file="${HOME}/.claude/settings.json"
+if [ -f "$settings_file" ]; then
+    effort=$(jq -r '.effortLevel // empty' "$settings_file" 2>/dev/null)
+fi
+effort_letter="" effort_color=""
+case "$effort" in
+    low)    effort_letter="L"; effort_color="$green" ;;
+    medium) effort_letter="M"; effort_color="$orange" ;;
+    high)   effort_letter="H"; effort_color="$yellow" ;;
+    max)    effort_letter="X"; effort_color="$red" ;;
+esac
+
 # ── Session data ───────────────────────────────────────
 model=$(echo "$input" | jq -r '.model.display_name // "Claude"')
 size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
@@ -205,7 +219,7 @@ fi
 # ══════════════════════════════════════════════════════
 # COMPACT MODE (< 80 cols — phones, VPS, narrow panes)
 # One line, no bars — color-coded percentages
-# Op4.6 7% ~$2.25 · 5h 7% in 2h · 7d 9% in 4d
+# Op4.6 H 7% ~$2.25 · 5h 7% in 2h · 7d 9% in 4d
 # ══════════════════════════════════════════════════════
 
 if [ "$cols" -lt 80 ]; then
@@ -214,7 +228,9 @@ if [ "$cols" -lt 80 ]; then
     five_c=$(pct_color $five_pct)
     week_c=$(pct_color $week_pct)
 
-    line="${blue}${smodel}${reset} ${pct_c}${pct_used}%${reset} ${dim}~${cost_fmt}${reset}"
+    line="${blue}${smodel}${reset}"
+    [ -n "$effort_letter" ] && line+=" ${effort_color}${effort_letter}${reset}"
+    line+=" ${pct_c}${pct_used}%${reset} ${dim}~${cost_fmt}${reset}"
 
     if [ -n "$usage" ]; then
         line+=" ${dim}·${reset} ${dim}5h ${reset}${five_c}${five_pct}%${reset}"
@@ -235,8 +251,9 @@ fi
 # FULL MODE (>= 80 cols — desktop / wide terminal)
 # ══════════════════════════════════════════════════════
 
-# LINE 1: Model | context bar | cost
+# LINE 1: Model [effort] | context bar | cost
 line1="${blue}${model}${reset}"
+[ -n "$effort_letter" ] && line1+=" ${effort_color}${effort_letter}${reset}"
 line1+=" ${dim}|${reset} "
 line1+="$(build_bar $pct_used 10) "
 line1+="${cyan}$(fmt_tok $current)${dim}/${reset}$(fmt_tok $size)"
