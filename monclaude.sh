@@ -235,7 +235,7 @@ if [ "$cols" -lt 80 ]; then
     if [ -n "$usage" ]; then
         line+=" ${dim}·${reset} ${dim}5h ${reset}${five_c}${five_pct}%${reset}"
         [ -n "$five_reset" ] && line+=" ${dim}${five_reset}${reset}"
-        $is_peak && line+=" ${yellow}PK${reset}"
+        if $is_peak; then line+=" ${yellow}PK${reset}"; else line+=" ${green}OFF${reset}"; fi
         line+=" ${dim}· 7d ${reset}${week_c}${week_pct}%${reset}"
         [ -n "$week_reset" ] && line+=" ${dim}${week_reset}${reset}"
         if [ "$extra_enabled" = "true" ]; then
@@ -260,13 +260,14 @@ line1+="${cyan}$(fmt_tok $current)${dim}/${reset}$(fmt_tok $size)"
 line1+=" ${dim}(${pct_used}%)${reset}"
 line1+=" ${dim}|${reset} "
 line1+="${dim}~${cost_fmt}${reset}"
+line1+=" ${dim}|${reset} "
+if $is_peak; then line1+="${yellow}PEAK${reset}"; else line1+="${green}OFF-PEAK${reset}"; fi
 
 # LINE 2: 5hr | weekly | extra
 line2=""
 if [ -n "$usage" ]; then
     line2="${white}5hr${reset} $(build_bar $five_pct 10) ${cyan}${five_pct}%${reset}"
     [ -n "$five_reset" ] && line2+=" ${dim}${five_reset}${reset}"
-    $is_peak && line2+=" ${yellow}PEAK${reset}"
     line2+=" ${dim}|${reset} "
     line2+="${white}7d${reset} $(build_bar $week_pct 10) ${cyan}${week_pct}%${reset}"
     [ -n "$week_reset" ] && line2+=" ${dim}${week_reset}${reset}"
