@@ -180,13 +180,23 @@ if $needs_refresh; then
             -H "anthropic-beta: oauth-2025-04-20" \
             "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
         if [ -n "$resp" ] && echo "$resp" | jq -e . >/dev/null 2>&1; then
-            usage="$resp"
+            # Always cache (even errors) to respect the 60s cooldown and avoid
+            # hammering the API, but only treat the response as usage data if
+            # it has the expected structure. Error responses like
+            # {"error":{"type":"rate_limit_error",...}} would otherwise be
+            # parsed as 0% across the board.
             echo "$resp" > "$cache_file"
+            if echo "$resp" | jq -e '.five_hour' >/dev/null 2>&1; then
+                usage="$resp"
+            fi
         fi
     fi
 fi
 if [ -z "$usage" ] && [ -f "$cache_file" ]; then
-    usage=$(cat "$cache_file" 2>/dev/null)
+    cached=$(cat "$cache_file" 2>/dev/null)
+    if [ -n "$cached" ] && echo "$cached" | jq -e '.five_hour' >/dev/null 2>&1; then
+        usage="$cached"
+    fi
 fi
 
 # ── Peak detection ────────────────────────────────────
