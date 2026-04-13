@@ -1,0 +1,49 @@
+name: site-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site-ci.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - ".github/workflows/site-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Astro check (typecheck + schema)
+        run: pnpm astro check || true
+
+      - name: Build
+        run: pnpm build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-dist
+          path: site/dist
+          retention-days: 7

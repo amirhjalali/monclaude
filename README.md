@@ -6,6 +6,8 @@ A rich, real-time status line for [Claude Code](https://docs.anthropic.com/en/do
 
 ![screenshot](screenshot.png)
 
+> **Part of [Clawed-Code](https://clawed-code.com)** — a growing collection of field notes, tools, and prompts for working with Claude and other coding agents. The site source lives in [`site/`](./site); see [`site/CONTRIBUTING.md`](./site/CONTRIBUTING.md) to add a guide, tool, or prompt.
+
 ## What you get
 
 ```

@@ -1,0 +1,77 @@
+---
+const pathname = Astro.url.pathname;
+const isActive = (p: string) =>
+  p === "/" ? pathname === "/" : pathname.startsWith(p);
+
+const links = [
+  { href: "/guides", label: "Guides" },
+  { href: "/tools", label: "Tools" },
+  { href: "/prompts", label: "Prompts" },
+  { href: "/about", label: "About" },
+];
+---
+
+<header class="sticky top-0 z-20 border-b border-white/5 bg-ink-900/70 backdrop-blur-md">
+  <div class="mx-auto flex max-w-5xl items-center justify-between px-5 py-4 sm:px-8">
+    <a href="/" class="group flex items-center gap-2">
+      <svg
+        width="28"
+        height="28"
+        viewBox="0 0 32 32"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true"
+      >
+        <path
+          d="M4 26 L10 6"
+          stroke="currentColor"
+          stroke-width="2.4"
+          stroke-linecap="round"
+          class="text-claw-500 transition-transform group-hover:-translate-y-0.5"
+        />
+        <path
+          d="M12 28 L18 4"
+          stroke="currentColor"
+          stroke-width="2.4"
+          stroke-linecap="round"
+          class="text-claw-400 transition-transform group-hover:-translate-y-0.5"
+        />
+        <path
+          d="M22 26 L28 8"
+          stroke="currentColor"
+          stroke-width="2.4"
+          stroke-linecap="round"
+          class="text-claw-600 transition-transform group-hover:-translate-y-0.5"
+        />
+      </svg>
+      <span class="font-semibold tracking-tight">
+        Clawed<span class="text-claw-500">-</span>Code
+      </span>
+    </a>
+
+    <nav class="flex items-center gap-1 text-sm">
+      {
+        links.map((l) => (
+          <a
+            href={l.href}
+            class:list={[
+              "rounded-md px-3 py-1.5 transition",
+              isActive(l.href)
+                ? "bg-white/10 text-white"
+                : "text-ink-200 hover:bg-white/5 hover:text-white",
+            ]}
+          >
+            {l.label}
+          </a>
+        ))
+      }
+      <a
+        href="https://github.com/amirhjalali/clawed-code"
+        rel="noopener"
+        class="ml-2 hidden rounded-md border border-white/10 px-3 py-1.5 text-ink-100 transition hover:border-claw-500 hover:text-white sm:inline-block"
+      >
+        GitHub ↗
+      </a>
+    </nav>
+  </div>
+</header>

@@ -1,0 +1,48 @@
+name: Propose new content
+description: Suggest a guide, tool, or prompt to add to Clawed-Code.
+title: "[content] <short title>"
+labels: ["content"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Content type
+      options:
+        - guide
+        - tool
+        - prompt
+    validations:
+      required: true
+  - type: input
+    id: working-title
+    attributes:
+      label: Working title
+      placeholder: "Designing a CLAUDE.md that earns its tokens"
+    validations:
+      required: true
+  - type: textarea
+    id: pitch
+    attributes:
+      label: The pitch
+      description: What's the insight? Why would the reader care?
+      placeholder: One paragraph.
+    validations:
+      required: true
+  - type: textarea
+    id: outline
+    attributes:
+      label: Rough outline
+      description: Headings and a bullet or two per section.
+    validations:
+      required: false
+  - type: checkboxes
+    id: editorial
+    attributes:
+      label: Editorial fit
+      options:
+        - label: It's specific — names real tools, pastes real prompts, shows real outputs.
+          required: true
+        - label: It's honest — if a pattern has downsides, I'll name them.
+          required: true
+        - label: It's short — I can say the useful thing in under ~800 words.
+          required: true

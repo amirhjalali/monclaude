@@ -1,0 +1,61 @@
+name: site-deploy
+
+# Deploys the Clawed-Code site to Cloudflare Pages on every push to main.
+#
+# Prerequisites (one-time setup):
+#   - Create a Cloudflare Pages project named `clawed-code`.
+#   - Add these repository secrets:
+#       CLOUDFLARE_API_TOKEN — token with "Cloudflare Pages: Edit" permission
+#       CLOUDFLARE_ACCOUNT_ID — your account id
+#
+# Swap to another host (Vercel, Netlify, GitHub Pages) by replacing the
+# `Deploy` step — the build above is host-agnostic.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site-deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: site-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build & deploy to Cloudflare Pages
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile || pnpm install
+
+      - name: Build
+        run: pnpm build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site/dist --project-name=clawed-code --branch=main
+          workingDirectory: ${{ github.workspace }}

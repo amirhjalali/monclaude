@@ -1,0 +1,156 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Card from "../components/Card.astro";
+import { getCollection } from "astro:content";
+
+const guides = (await getCollection("guides", ({ data }) => !data.draft))
+  .sort((a, b) => a.data.order - b.data.order)
+  .slice(0, 4);
+
+const tools = (await getCollection("tools", ({ data }) => !data.draft))
+  .sort((a, b) => Number(b.data.featured) - Number(a.data.featured));
+
+const prompts = (await getCollection("prompts", ({ data }) => !data.draft))
+  .sort((a, b) => b.data.pubDate.getTime() - a.data.pubDate.getTime())
+  .slice(0, 3);
+
+const fmt = (d: Date) =>
+  d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+---
+
+<Layout>
+  <!-- Hero -->
+  <section class="relative pt-10 pb-16 sm:pt-16 sm:pb-24">
+    <div class="claw-scratch mb-6 h-3 w-40 opacity-80"></div>
+    <h1 class="max-w-3xl text-4xl font-semibold leading-[1.05] tracking-tight text-white sm:text-6xl">
+      Get your claws into
+      <span class="text-claw-500">Claude</span>.
+    </h1>
+    <p class="mt-5 max-w-2xl text-lg text-ink-200 sm:text-xl">
+      Field notes, sharp prompts, and small tools for squeezing more out of
+      Claude Code and other coding agents. Written from practice, not theory.
+    </p>
+    <div class="mt-8 flex flex-wrap gap-3">
+      <a
+        href="/guides"
+        class="rounded-md bg-claw-500 px-5 py-2.5 font-medium text-ink-900 transition hover:bg-claw-400"
+      >
+        Start with the guides
+      </a>
+      <a
+        href="/tools"
+        class="rounded-md border border-white/15 px-5 py-2.5 font-medium text-ink-100 transition hover:border-claw-500 hover:text-white"
+      >
+        Browse the tools
+      </a>
+    </div>
+
+    <dl class="mt-14 grid grid-cols-2 gap-6 border-t border-white/5 pt-8 sm:grid-cols-4">
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-ink-300">Guides</dt>
+        <dd class="mt-1 text-2xl font-semibold text-white">{guides.length}+</dd>
+      </div>
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-ink-300">Tools</dt>
+        <dd class="mt-1 text-2xl font-semibold text-white">{tools.length}</dd>
+      </div>
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-ink-300">Prompts</dt>
+        <dd class="mt-1 text-2xl font-semibold text-white">{prompts.length}</dd>
+      </div>
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-ink-300">License</dt>
+        <dd class="mt-1 text-2xl font-semibold text-white">MIT</dd>
+      </div>
+    </dl>
+  </section>
+
+  <!-- Guides -->
+  <section class="border-t border-white/5 pt-10">
+    <div class="mb-6 flex items-baseline justify-between">
+      <h2 class="text-2xl font-semibold text-white">Latest guides</h2>
+      <a href="/guides" class="text-sm text-claw-400 hover:text-claw-500">All guides →</a>
+    </div>
+    <div class="grid gap-4 sm:grid-cols-2">
+      {
+        guides.map((g) => (
+          <Card
+            href={`/guides/${g.id}/`}
+            title={g.data.title}
+            description={g.data.description}
+            meta={fmt(g.data.pubDate)}
+            tags={g.data.tags}
+          />
+        ))
+      }
+    </div>
+  </section>
+
+  <!-- Tools -->
+  <section class="mt-16 border-t border-white/5 pt-10">
+    <div class="mb-6 flex items-baseline justify-between">
+      <h2 class="text-2xl font-semibold text-white">Tools I actually use</h2>
+      <a href="/tools" class="text-sm text-claw-400 hover:text-claw-500">All tools →</a>
+    </div>
+    <div class="grid gap-4 sm:grid-cols-2">
+      {
+        tools.map((t) => (
+          <Card
+            href={`/tools/${t.id}/`}
+            title={t.data.title}
+            description={t.data.description}
+            meta={t.data.featured ? "Featured" : undefined}
+            tags={t.data.tags}
+          />
+        ))
+      }
+    </div>
+  </section>
+
+  <!-- Prompts -->
+  <section class="mt-16 border-t border-white/5 pt-10">
+    <div class="mb-6 flex items-baseline justify-between">
+      <h2 class="text-2xl font-semibold text-white">Recent prompts</h2>
+      <a href="/prompts" class="text-sm text-claw-400 hover:text-claw-500">All prompts →</a>
+    </div>
+    <div class="grid gap-4 sm:grid-cols-2">
+      {
+        prompts.map((p) => (
+          <Card
+            href={`/prompts/${p.id}/`}
+            title={p.data.title}
+            description={p.data.description}
+            meta={p.data.agent}
+            tags={p.data.tags}
+          />
+        ))
+      }
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="mt-20 rounded-2xl border border-white/5 bg-gradient-to-br from-white/[0.04] to-transparent p-8 sm:p-12">
+    <h2 class="text-2xl font-semibold text-white sm:text-3xl">
+      Contribute your own notes.
+    </h2>
+    <p class="mt-3 max-w-2xl text-ink-200">
+      Clawed-Code is a living collection. Open a PR with a guide, a prompt that
+      earned its keep, or a tool that changed how you ship — the content
+      pipeline is just markdown files.
+    </p>
+    <div class="mt-6 flex flex-wrap gap-3">
+      <a
+        href="https://github.com/amirhjalali/clawed-code/blob/main/CONTRIBUTING.md"
+        class="rounded-md bg-white px-5 py-2.5 font-medium text-ink-900 transition hover:bg-ink-100"
+      >
+        How to contribute
+      </a>
+      <a
+        href="/guides/contributing"
+        class="rounded-md border border-white/15 px-5 py-2.5 font-medium text-ink-100 transition hover:border-claw-500 hover:text-white"
+      >
+        Content pipeline
+      </a>
+    </div>
+  </section>
+</Layout>

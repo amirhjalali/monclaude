@@ -1,0 +1,36 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import Card from "../../components/Card.astro";
+import { getCollection } from "astro:content";
+
+const tools = (await getCollection("tools", ({ data }) => !data.draft)).sort(
+  (a, b) =>
+    Number(b.data.featured) - Number(a.data.featured) ||
+    b.data.pubDate.getTime() - a.data.pubDate.getTime(),
+);
+---
+
+<Layout
+  title="Tools — Clawed-Code"
+  description="Small, sharp tools for working alongside coding agents."
+>
+  <header class="pt-10 pb-8">
+    <h1 class="text-4xl font-semibold text-white">Tools</h1>
+    <p class="mt-3 max-w-2xl text-ink-200">
+      Hand-picked utilities for agentic coding. Some I've built, others I rely on.
+    </p>
+  </header>
+  <div class="grid gap-4 sm:grid-cols-2">
+    {
+      tools.map((t) => (
+        <Card
+          href={`/tools/${t.id}/`}
+          title={t.data.title}
+          description={t.data.description}
+          meta={t.data.featured ? "Featured" : undefined}
+          tags={t.data.tags}
+        />
+      ))
+    }
+  </div>
+</Layout>

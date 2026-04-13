@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://clawed-code.com/sitemap-index.xml

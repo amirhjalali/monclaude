@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Clawed-Code brand — warm amber claw marks on soft ink */
+  --color-ink-50: #f7f5f2;
+  --color-ink-100: #ece8e1;
+  --color-ink-200: #c9c2b6;
+  --color-ink-300: #968d7e;
+  --color-ink-500: #4a4338;
+  --color-ink-700: #2a241d;
+  --color-ink-800: #1b1611;
+  --color-ink-900: #12100c;
+
+  --color-claw-50: #fff7ed;
+  --color-claw-200: #fed7aa;
+  --color-claw-400: #fb923c;
+  --color-claw-500: #f97316;
+  --color-claw-600: #ea580c;
+  --color-claw-700: #c2410c;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  background-color: var(--color-ink-900);
+  color: var(--color-ink-100);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(249, 115, 22, 0.09), transparent 60%),
+    radial-gradient(900px 500px at 90% 0%, rgba(249, 115, 22, 0.05), transparent 60%),
+    var(--color-ink-900);
+}
+
+::selection {
+  background: var(--color-claw-500);
+  color: var(--color-ink-900);
+}
+
+/* Prose tweaks for markdown content */
+.prose-claw {
+  color: var(--color-ink-100);
+  line-height: 1.7;
+}
+.prose-claw h1,
+.prose-claw h2,
+.prose-claw h3,
+.prose-claw h4 {
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-top: 2em;
+  margin-bottom: 0.6em;
+}
+.prose-claw h1 { font-size: 2rem; margin-top: 0; }
+.prose-claw h2 { font-size: 1.5rem; }
+.prose-claw h3 { font-size: 1.2rem; }
+.prose-claw p,
+.prose-claw ul,
+.prose-claw ol,
+.prose-claw blockquote {
+  margin: 1em 0;
+}
+.prose-claw a {
+  color: var(--color-claw-400);
+  text-decoration: underline;
+  text-decoration-color: rgba(249, 115, 22, 0.3);
+  text-underline-offset: 3px;
+}
+.prose-claw a:hover {
+  text-decoration-color: var(--color-claw-400);
+}
+.prose-claw ul { list-style: disc; padding-left: 1.4em; }
+.prose-claw ol { list-style: decimal; padding-left: 1.4em; }
+.prose-claw li { margin: 0.3em 0; }
+.prose-claw code:not(pre code) {
+  background: rgba(249, 115, 22, 0.12);
+  color: var(--color-claw-200);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: var(--font-mono);
+}
+.prose-claw pre {
+  background: var(--color-ink-800) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 1rem 1.15rem;
+  overflow-x: auto;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+.prose-claw pre code {
+  font-family: var(--font-mono);
+}
+.prose-claw blockquote {
+  border-left: 3px solid var(--color-claw-500);
+  padding-left: 1rem;
+  color: var(--color-ink-200);
+  font-style: italic;
+}
+.prose-claw hr {
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 2.5rem 0;
+}
+.prose-claw table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.prose-claw th,
+.prose-claw td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+}
+.prose-claw th {
+  font-weight: 600;
+  color: #fff;
+}
+
+/* Subtle scratch-mark divider used as hero accent */
+.claw-scratch {
+  background-image: linear-gradient(
+    100deg,
+    transparent 0,
+    transparent 2%,
+    var(--color-claw-500) 2%,
+    var(--color-claw-500) 2.4%,
+    transparent 2.4%,
+    transparent 10%,
+    var(--color-claw-500) 10%,
+    var(--color-claw-500) 10.35%,
+    transparent 10.35%,
+    transparent 18%,
+    var(--color-claw-500) 18%,
+    var(--color-claw-500) 18.3%,
+    transparent 18.3%
+  );
+}
