@@ -144,7 +144,7 @@ pct_used=$(( current * 100 / size ))
 cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 cost_fmt=$(awk "BEGIN {printf \"$%.2f\", $cost}")
 
-# ── Usage API (cached 60s) ────────────────────────────
+# ── Usage API (cached) ────────────────────────────────
 # Cache strategy:
 #   - file contents = last VALID response (never overwritten by errors)
 #   - file mtime    = last attempt (always bumped to enforce cooldown)
@@ -155,10 +155,28 @@ cost_fmt=$(awk "BEGIN {printf \"$%.2f\", $cost}")
 # fire the API, tripping rate limits in a burst. mkdir is atomic on POSIX,
 # so we use it as a portable cross-process mutex (flock isn't built in on
 # macOS).
+#
+# Error backoff: Anthropic's /api/oauth/usage endpoint has a known upstream
+# bug (claude-code#30930, #31021, #31637) where it can get stuck returning
+# HTTP 429 for hours regardless of retry cadence. When we detect that stuck
+# state (cache file exists but has no valid data), stretch TTL to 30 min
+# so we stop pressuring the broken endpoint. Normal 180s cadence resumes
+# automatically once a successful response lands.
 cache_file="/tmp/claude/statusline-usage-cache.json"
 lock_dir="/tmp/claude/statusline-refresh.lock"
+cache_ttl=180
+error_ttl=1800
 lock_stale_secs=5
 mkdir -p /tmp/claude
+
+# If the cache is currently in a stuck/error state, use the longer error TTL
+effective_ttl=$cache_ttl
+if [ -f "$cache_file" ]; then
+    probe=$(cat "$cache_file" 2>/dev/null)
+    if [ -z "$probe" ] || ! echo "$probe" | jq -e '.five_hour' >/dev/null 2>&1; then
+        effective_ttl=$error_ttl
+    fi
+fi
 
 needs_refresh=true
 if [ -f "$cache_file" ]; then
@@ -168,7 +186,7 @@ if [ -f "$cache_file" ]; then
         cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null)
     fi
     now=$(date +%s)
-    if [ $(( now - cache_mtime )) -lt 60 ]; then
+    if [ $(( now - cache_mtime )) -lt $effective_ttl ]; then
         needs_refresh=false
     fi
 fi
@@ -234,11 +252,17 @@ if $got_lock; then
 fi
 
 # Read last-good cached response (only accept real usage payloads).
+# If the cache file exists but contains no valid data, we've tried and
+# failed to fetch — remember that so the status line can surface an
+# error indicator instead of silently hiding the usage row.
 usage=""
+usage_error=false
 if [ -f "$cache_file" ]; then
     cached=$(cat "$cache_file" 2>/dev/null)
     if [ -n "$cached" ] && echo "$cached" | jq -e '.five_hour' >/dev/null 2>&1; then
         usage="$cached"
+    else
+        usage_error=true
     fi
 fi
 
@@ -294,6 +318,8 @@ if [ "$cols" -lt 80 ]; then
         if [ "$extra_enabled" = "true" ]; then
             line+=" ${cyan}+\$${extra_used}${reset}"
         fi
+    elif $usage_error; then
+        line+=" ${dim}·${reset} ${yellow}usage api down${reset} ${dim}(upstream)${reset}"
     fi
 
     printf "%b" "$line"
@@ -316,7 +342,7 @@ line1+="${dim}~${cost_fmt}${reset}"
 line1+=" ${dim}|${reset} "
 if $is_peak; then line1+="${yellow}PEAK${reset}"; else line1+="${green}OFF-PEAK${reset}"; fi
 
-# LINE 2: 5hr | weekly | extra
+# LINE 2: 5hr | weekly | extra  (or rate-limit indicator)
 line2=""
 if [ -n "$usage" ]; then
     line2="${white}5hr${reset} $(build_bar $five_pct 10) ${cyan}${five_pct}%${reset}"
@@ -328,6 +354,8 @@ if [ -n "$usage" ]; then
         line2+=" ${dim}|${reset} "
         line2+="${white}extra${reset} ${cyan}\$${extra_used}${dim}/\$${extra_limit}${reset}"
     fi
+elif $usage_error; then
+    line2="${dim}usage api down upstream (HTTP 429, anthropics/claude-code#30930) — auto-retry${reset}"
 fi
 
 printf "%b" "$line1"
