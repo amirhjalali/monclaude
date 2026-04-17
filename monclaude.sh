@@ -145,7 +145,19 @@ cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 cost_fmt=$(awk "BEGIN {printf \"$%.2f\", $cost}")
 
 # ── Usage API (cached 60s) ────────────────────────────
+# Cache strategy:
+#   - file contents = last VALID response (never overwritten by errors)
+#   - file mtime    = last attempt (always bumped to enforce cooldown)
+#   - mkdir lock    = mutex so only ONE session refreshes per TTL window
+#
+# Without the mutex, N concurrent sessions that hit the status line in the
+# same ~100ms after the TTL expires will ALL see the stale cache and ALL
+# fire the API, tripping rate limits in a burst. mkdir is atomic on POSIX,
+# so we use it as a portable cross-process mutex (flock isn't built in on
+# macOS).
 cache_file="/tmp/claude/statusline-usage-cache.json"
+lock_dir="/tmp/claude/statusline-refresh.lock"
+lock_stale_secs=5
 mkdir -p /tmp/claude
 
 needs_refresh=true
@@ -161,8 +173,29 @@ if [ -f "$cache_file" ]; then
     fi
 fi
 
-usage=""
+# Try to acquire the refresh lock. If another session is already refreshing,
+# we skip our own attempt and just read whatever's in the cache.
+got_lock=false
 if $needs_refresh; then
+    # Clean stale lock from a session that was killed mid-refresh
+    if [ -d "$lock_dir" ]; then
+        if $is_mac; then
+            lock_mtime=$(stat -f %m "$lock_dir" 2>/dev/null)
+        else
+            lock_mtime=$(stat -c %Y "$lock_dir" 2>/dev/null)
+        fi
+        now=$(date +%s)
+        if [ $(( now - lock_mtime )) -gt $lock_stale_secs ]; then
+            rmdir "$lock_dir" 2>/dev/null
+        fi
+    fi
+    if mkdir "$lock_dir" 2>/dev/null; then
+        got_lock=true
+        trap 'rmdir "$lock_dir" 2>/dev/null' EXIT HUP INT TERM
+    fi
+fi
+
+if $got_lock; then
     token=""
     if $is_mac; then
         token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
@@ -179,20 +212,30 @@ if $needs_refresh; then
             -H "Authorization: Bearer $token" \
             -H "anthropic-beta: oauth-2025-04-20" \
             "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-        if [ -n "$resp" ] && echo "$resp" | jq -e . >/dev/null 2>&1; then
-            # Always cache (even errors) to respect the 60s cooldown and avoid
-            # hammering the API, but only treat the response as usage data if
-            # it has the expected structure. Error responses like
-            # {"error":{"type":"rate_limit_error",...}} would otherwise be
-            # parsed as 0% across the board.
-            echo "$resp" > "$cache_file"
-            if echo "$resp" | jq -e '.five_hour' >/dev/null 2>&1; then
-                usage="$resp"
+        if [ -n "$resp" ] && echo "$resp" | jq -e '.five_hour' >/dev/null 2>&1; then
+            # Fresh valid data — atomic write so concurrent readers never see
+            # a partial file.
+            tmp_file="${cache_file}.tmp.$$"
+            if echo "$resp" > "$tmp_file" 2>/dev/null; then
+                mv "$tmp_file" "$cache_file" 2>/dev/null || rm -f "$tmp_file"
+            fi
+        else
+            # Error, empty, or malformed — preserve last-good contents, just
+            # bump mtime so we honor the cooldown before the next retry.
+            if [ -f "$cache_file" ]; then
+                touch "$cache_file" 2>/dev/null
+            else
+                : > "$cache_file"
             fi
         fi
     fi
+    rmdir "$lock_dir" 2>/dev/null
+    trap - EXIT HUP INT TERM
 fi
-if [ -z "$usage" ] && [ -f "$cache_file" ]; then
+
+# Read last-good cached response (only accept real usage payloads).
+usage=""
+if [ -f "$cache_file" ]; then
     cached=$(cat "$cache_file" 2>/dev/null)
     if [ -n "$cached" ] && echo "$cached" | jq -e '.five_hour' >/dev/null 2>&1; then
         usage="$cached"
