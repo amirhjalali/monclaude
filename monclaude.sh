@@ -340,6 +340,44 @@ if [ -n "$usage" ] && echo "$usage" | jq -e . >/dev/null 2>&1; then
     fi
 fi
 
+# ── 5h → 7d contribution tracking ─────────────────────
+# Snapshot seven_day.utilization at the first render of each 5h window,
+# then show how much *this* window has added to the 7d total (delta in
+# percentage points). Baseline rolls over automatically when the
+# five_hour.resets_at timestamp changes.
+baseline_file="/tmp/claude/statusline-5h-baseline.json"
+week_delta=""
+if [ -n "$usage" ]; then
+    week_pct_raw=$(echo "$usage" | jq -r '.seven_day.utilization // 0')
+    current_5h_resets=$(echo "$usage" | jq -r '.five_hour.resets_at // empty')
+    if [ -n "$current_5h_resets" ]; then
+        baseline_resets=""
+        baseline_week=""
+        if [ -f "$baseline_file" ]; then
+            baseline_resets=$(jq -r '.resets_at // empty' "$baseline_file" 2>/dev/null)
+            baseline_week=$(jq -r '.week_pct // empty' "$baseline_file" 2>/dev/null)
+        fi
+        if [ "$baseline_resets" != "$current_5h_resets" ] || [ -z "$baseline_week" ]; then
+            # New 5h window (or first run) — snapshot current as baseline.
+            tmp_b="${baseline_file}.tmp.$$"
+            if printf '{"resets_at":"%s","week_pct":%s}\n' "$current_5h_resets" "$week_pct_raw" > "$tmp_b" 2>/dev/null; then
+                mv "$tmp_b" "$baseline_file" 2>/dev/null || rm -f "$tmp_b"
+            fi
+            baseline_week="$week_pct_raw"
+        fi
+        if [ -n "$baseline_week" ]; then
+            # Clamp negative (7d window rolled independently of 5h — rare) to 0.
+            # Render 1 decimal for sub-1pp; drop the row entirely below 0.1pp.
+            week_delta=$(awk "BEGIN {
+                d = $week_pct_raw - $baseline_week;
+                if (d < 0.1) { exit 0 }
+                if (d < 10) printf \"%.1f\", d;
+                else printf \"%.0f\", d;
+            }")
+        fi
+    fi
+fi
+
 # ══════════════════════════════════════════════════════
 # COMPACT MODE (< 80 cols — phones, VPS, narrow panes)
 # One line, no bars — color-coded percentages
@@ -366,6 +404,7 @@ if [ "$cols" -lt 80 ]; then
         fi
         [ "$peak_secs" -gt 0 ] && line+=" ${dim}$(fmt_secs $peak_secs)${reset}"
         line+=" ${dim}· 7d ${reset}${week_c}${week_pct}%${reset}"
+        [ -n "$week_delta" ] && line+=" ${dim}+${week_delta}pp${reset}"
         [ -n "$week_reset" ] && line+=" ${dim}${week_reset}${reset}"
         if [ "$extra_enabled" = "true" ]; then
             line+=" ${cyan}+\$${extra_used}${reset}"
@@ -407,6 +446,7 @@ if [ -n "$usage" ]; then
     [ -n "$five_reset" ] && line2+=" ${dim}${five_reset}${reset}"
     line2+=" ${dim}|${reset} "
     line2+="${white}7d${reset} $(build_bar $week_pct 10) ${cyan}${week_pct}%${reset}"
+    [ -n "$week_delta" ] && line2+=" ${dim}+${week_delta}pp 5h${reset}"
     [ -n "$week_reset" ] && line2+=" ${dim}${week_reset}${reset}"
     if [ "$extra_enabled" = "true" ]; then
         line2+=" ${dim}|${reset} "
