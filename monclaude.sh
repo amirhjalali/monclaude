@@ -274,6 +274,53 @@ if [ "$pt_day" -le 5 ] && [ "$pt_hour" -ge 5 ] && [ "$pt_hour" -lt 11 ]; then
     is_peak=true
 fi
 
+# ── Peak countdown ────────────────────────────────────
+# Next boundary: if peak, 11:00 PT today; otherwise 05:00 PT on next weekday.
+# pt_day: 1=Mon..7=Sun. Friday after 11am jumps to Monday (+3d), weekends to Mon.
+peak_secs=0
+if $is_peak; then
+    target_date_pt=$(TZ=America/Los_Angeles date +%Y-%m-%d)
+    target_time_pt="11:00:00"
+else
+    days_add=0
+    case "$pt_day" in
+        1|2|3|4) [ "$pt_hour" -ge 11 ] && days_add=1 ;;
+        5)       [ "$pt_hour" -ge 11 ] && days_add=3 ;;
+        6)       days_add=2 ;;
+        7)       days_add=1 ;;
+    esac
+    if $is_mac; then
+        target_date_pt=$(TZ=America/Los_Angeles date -v+${days_add}d +%Y-%m-%d)
+    else
+        target_date_pt=$(TZ=America/Los_Angeles date -d "+${days_add} days" +%Y-%m-%d)
+    fi
+    target_time_pt="05:00:00"
+fi
+if $is_mac; then
+    peak_target_epoch=$(TZ=America/Los_Angeles date -j -f "%Y-%m-%d %H:%M:%S" "$target_date_pt $target_time_pt" +%s 2>/dev/null)
+else
+    peak_target_epoch=$(TZ=America/Los_Angeles date -d "$target_date_pt $target_time_pt" +%s 2>/dev/null)
+fi
+if [ -n "$peak_target_epoch" ]; then
+    peak_secs=$(( peak_target_epoch - $(date +%s) ))
+    [ "$peak_secs" -lt 0 ] && peak_secs=0
+fi
+
+fmt_secs() {
+    local diff=$1
+    [ "$diff" -le 0 ] && { printf "0m"; return; }
+    local days=$(( diff / 86400 ))
+    local hours=$(( (diff % 86400) / 3600 ))
+    local mins=$(( (diff % 3600) / 60 ))
+    if [ "$days" -gt 0 ]; then
+        printf "%dd %dh" "$days" "$hours"
+    elif [ "$hours" -gt 0 ]; then
+        printf "%dh %dm" "$hours" "$mins"
+    else
+        printf "%dm" "$mins"
+    fi
+}
+
 # ── Parse usage data ──────────────────────────────────
 five_pct=0; week_pct=0; five_reset=""; week_reset=""
 extra_enabled=false; extra_used=""; extra_limit=""
@@ -312,7 +359,12 @@ if [ "$cols" -lt 80 ]; then
     if [ -n "$usage" ]; then
         line+=" ${dim}·${reset} ${dim}5h ${reset}${five_c}${five_pct}%${reset}"
         [ -n "$five_reset" ] && line+=" ${dim}${five_reset}${reset}"
-        if $is_peak; then line+=" ${yellow}PK${reset}"; else line+=" ${green}OFF${reset}"; fi
+        if $is_peak; then
+            line+=" ${yellow}PK${reset}"
+        else
+            line+=" ${green}OFF${reset}"
+        fi
+        [ "$peak_secs" -gt 0 ] && line+=" ${dim}$(fmt_secs $peak_secs)${reset}"
         line+=" ${dim}· 7d ${reset}${week_c}${week_pct}%${reset}"
         [ -n "$week_reset" ] && line+=" ${dim}${week_reset}${reset}"
         if [ "$extra_enabled" = "true" ]; then
@@ -340,7 +392,13 @@ line1+=" ${dim}(${pct_used}%)${reset}"
 line1+=" ${dim}|${reset} "
 line1+="${dim}~${cost_fmt}${reset}"
 line1+=" ${dim}|${reset} "
-if $is_peak; then line1+="${yellow}PEAK${reset}"; else line1+="${green}OFF-PEAK${reset}"; fi
+if $is_peak; then
+    line1+="${yellow}PEAK${reset}"
+    [ "$peak_secs" -gt 0 ] && line1+=" ${dim}ends in $(fmt_secs $peak_secs)${reset}"
+else
+    line1+="${green}OFF-PEAK${reset}"
+    [ "$peak_secs" -gt 0 ] && line1+=" ${dim}peak in $(fmt_secs $peak_secs)${reset}"
+fi
 
 # LINE 2: 5hr | weekly | extra  (or rate-limit indicator)
 line2=""
