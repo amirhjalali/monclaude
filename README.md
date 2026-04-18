@@ -62,7 +62,7 @@ chmod +x ~/.claude/monclaude.sh
 
 1. Claude Code pipes session JSON (model, context, cost) into the status line script via stdin
 2. The script calls the Anthropic usage API to fetch 5-hour and 7-day rate limit data
-3. API responses are cached for 60 seconds at `/tmp/claude/statusline-usage-cache.json` to keep things snappy
+3. API responses are cached for 180 seconds at `/tmp/claude/statusline-usage-cache.json` (stretched to 30 min when the upstream endpoint is stuck in its known 429 loop — see anthropics/claude-code#30930) and a `mkdir` mutex serializes refreshes across concurrent sessions
 4. Peak hours are detected locally by checking if the current time falls within weekdays 5–11am PT
 
 ## Color coding
