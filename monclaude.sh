@@ -91,7 +91,8 @@ fmt_reset() {
         epoch=$(date -u -d "$stripped" +%s 2>/dev/null)
     fi
     [ -z "$epoch" ] && return
-    local now=$(date +%s)
+    local now
+    now=$(date +%s)
     local diff=$(( epoch - now ))
     [ "$diff" -le 0 ] && { printf "now"; return; }
     local days=$(( diff / 86400 ))
