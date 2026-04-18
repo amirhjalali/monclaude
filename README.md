@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/amirhjalali/monclaude/main/install.
 
 Paste this prompt into Claude Code and it will install monclaude for you:
 
-> Download https://raw.githubusercontent.com/amirhjalali/monclaude/main/monclaude.sh to ~/.claude/monclaude.sh, make it executable, ensure jq is installed, and set the status_line field in ~/.claude/settings.json to "~/.claude/monclaude.sh"
+> Download https://raw.githubusercontent.com/amirhjalali/monclaude/main/monclaude.sh to ~/.claude/monclaude.sh, make it executable, ensure jq is installed, and in ~/.claude/settings.json set the statusLine field to {"type": "command", "command": "~/.claude/monclaude.sh"}
 
 **Manual:**
 
@@ -48,7 +48,7 @@ chmod +x ~/.claude/monclaude.sh
 
 # Configure Claude Code
 # Add to ~/.claude/settings.json:
-# { "status_line": "/path/to/monclaude.sh" }
+# { "statusLine": { "type": "command", "command": "/path/to/monclaude.sh" } }
 ```
 
 ## Requirements

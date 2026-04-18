@@ -26,11 +26,11 @@ fi
 if [ -f "$SETTINGS" ]; then
     # Update existing settings
     tmp=$(mktemp)
-    jq --arg cmd "$DEST" '.status_line = $cmd' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+    jq --arg cmd "$DEST" '.statusLine = {type: "command", command: $cmd}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
 else
     # Create settings file
     mkdir -p "$(dirname "$SETTINGS")"
-    echo "{\"status_line\": \"$DEST\"}" | jq . > "$SETTINGS"
+    jq -n --arg cmd "$DEST" '{statusLine: {type: "command", command: $cmd}}' > "$SETTINGS"
 fi
 echo "  Configured Claude Code status line"
 
