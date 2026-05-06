@@ -1,6 +1,6 @@
 # monclaude
 
-A rich, real-time status line for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Monitor your context window, usage limits, peak hours, and costs — all without leaving your terminal.
+A rich, real-time status line for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Monitor your context window, usage limits, and costs — all without leaving your terminal.
 
 > *mon claude* — "my Claude" in French. Also: **mon**itor **Claude**.
 
@@ -10,7 +10,7 @@ A rich, real-time status line for [Claude Code](https://docs.anthropic.com/en/do
 
 ```
 Opus 4.6 (1M context) | ●●○○○○○○○○ 150k/1.0m (15%) | ~$1.24
-5hr ●○○○○○○○○○ 10% in 2h 6m PEAK | 7d ●○○○○○○○○○ 11% in 4d 11h | extra $33.05/$50
+5hr ●○○○○○○○○○ 10% in 2h 6m | 7d ●○○○○○○○○○ 11% in 4d 11h | extra $33.05/$50
 ```
 
 **Line 1** — Session vitals
@@ -21,7 +21,6 @@ Opus 4.6 (1M context) | ●●○○○○○○○○ 150k/1.0m (15%) | ~$1.24
 
 **Line 2** — Rate limits & billing
 - 5-hour rolling usage with time until reset
-- **PEAK** indicator during high-demand hours (weekdays 5–11am PT)
 - 7-day rolling usage with time until reset
 - Extra credits used / monthly cap (if enabled)
 
@@ -63,7 +62,6 @@ chmod +x ~/.claude/monclaude.sh
 1. Claude Code pipes session JSON (model, context, cost) into the status line script via stdin
 2. The script calls the Anthropic usage API to fetch 5-hour and 7-day rate limit data
 3. API responses are cached for 180 seconds at `/tmp/claude/statusline-usage-cache.json` (stretched to 30 min when the upstream endpoint is stuck in its known 429 loop — see anthropics/claude-code#30930) and a `mkdir` mutex serializes refreshes across concurrent sessions
-4. Peak hours are detected locally by checking if the current time falls within weekdays 5–11am PT
 
 ## Color coding
 
@@ -75,10 +73,6 @@ The progress bars shift color as usage climbs:
 | 50–69% | Orange |
 | 70–89% | Yellow |
 | 90–100% | Red |
-
-## Peak hours
-
-During weekdays **5am–11am PT** (1pm–7pm GMT), Anthropic applies higher token weights to manage demand. Your 5-hour session allowance burns faster during these windows, though weekly totals remain the same. The status line shows a yellow `PEAK` badge so you know when this is active.
 
 ## License
 
