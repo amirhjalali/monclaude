@@ -1,5 +1,9 @@
 # monclaude
 
+[![shellcheck](https://github.com/amirhjalali/monclaude/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/amirhjalali/monclaude/actions/workflows/shellcheck.yml)
+[![release](https://img.shields.io/github/v/release/amirhjalali/monclaude?color=333333)](https://github.com/amirhjalali/monclaude/releases)
+[![license](https://img.shields.io/github/license/amirhjalali/monclaude?color=333333)](LICENSE)
+
 A real-time status line for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). See context usage, rate limits, reset timers, weekly burn, and cost without leaving your terminal.
 
 > *mon claude* — "my Claude" in French. Also: **mon**itor **Claude**.
@@ -34,6 +38,24 @@ Opus 4.6 (1M context) | ●●○○○○○○○○ 150k/1.0m (15%) | ~$1.24
 - Clear upstream error indicator when the usage API is temporarily stuck
 
 ## Install
+
+**Homebrew:**
+
+```bash
+brew tap amirhjalali/monclaude https://github.com/amirhjalali/monclaude
+brew install monclaude
+```
+
+Configure Claude Code to call the Homebrew-installed script:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "monclaude"
+  }
+}
+```
 
 **One-liner:**
 
