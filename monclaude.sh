@@ -71,11 +71,11 @@ build_bar() {
     local filled=$(( pct * width / 100 ))
     local empty=$(( width - filled ))
     local c
-    c=$(pct_color $pct)
+    c=$(pct_color "$pct")
     local f="" e=""
     for ((i=0; i<filled; i++)); do f+="●"; done
     for ((i=0; i<empty; i++)); do e+="○"; done
-    printf "${c}${f}${dim}${e}${reset}"
+    printf "%b" "${c}${f}${dim}${e}${reset}"
 }
 
 fmt_reset() {
@@ -333,8 +333,8 @@ fi
 if [ "$cols" -lt 80 ]; then
     smodel=$(short_model "$model")
     pct_c=$(pct_color $pct_used)
-    five_c=$(pct_color $five_pct)
-    week_c=$(pct_color $week_pct)
+    five_c=$(pct_color "$five_pct")
+    week_c=$(pct_color "$week_pct")
 
     line="${blue}${smodel}${reset}"
     [ -n "$effort_letter" ] && line+=" ${effort_color}${effort_letter}${reset}"
@@ -366,7 +366,7 @@ line1="${blue}${model}${reset}"
 [ -n "$effort_letter" ] && line1+=" ${effort_color}${effort_letter}${reset}"
 line1+=" ${dim}|${reset} "
 line1+="$(build_bar $pct_used 10) "
-line1+="${cyan}$(fmt_tok $current)${dim}/${reset}$(fmt_tok $size)"
+line1+="${cyan}$(fmt_tok "$current")${dim}/${reset}$(fmt_tok "$size")"
 line1+=" ${dim}(${pct_used}%)${reset}"
 line1+=" ${dim}|${reset} "
 line1+="${dim}~${cost_fmt}${reset}"
@@ -374,10 +374,10 @@ line1+="${dim}~${cost_fmt}${reset}"
 # LINE 2: 5hr | weekly | extra  (or rate-limit indicator)
 line2=""
 if [ -n "$usage" ]; then
-    line2="${white}5hr${reset} $(build_bar $five_pct 10) ${cyan}${five_pct}%${reset}"
+    line2="${white}5hr${reset} $(build_bar "$five_pct" 10) ${cyan}${five_pct}%${reset}"
     [ -n "$five_reset" ] && line2+=" ${dim}${five_reset}${reset}"
     line2+=" ${dim}|${reset} "
-    line2+="${white}7d${reset} $(build_bar $week_pct 10) ${cyan}${week_pct}%${reset}"
+    line2+="${white}7d${reset} $(build_bar "$week_pct" 10) ${cyan}${week_pct}%${reset}"
     [ -n "$week_delta" ] && line2+=" ${dim}+${week_delta}pp 5h${reset}"
     [ -n "$week_reset" ] && line2+=" ${dim}${week_reset}${reset}"
     if [ "$extra_enabled" = "true" ]; then
