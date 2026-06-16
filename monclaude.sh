@@ -31,14 +31,20 @@ cols=${MONCLAUDE_COLS:-$(tmux display-message -p '#{pane_width}' 2>/dev/null \
 [ "$cols" -lt 20 ] && cols=40
 
 # ── Colors ─────────────────────────────────────────────
-blue='\033[38;2;0;153;255m'
-orange='\033[38;2;255;176;85m'
-green='\033[38;2;0;160;0m'
-cyan='\033[38;2;46;149;153m'
-red='\033[38;2;255;85;85m'
-yellow='\033[38;2;230;200;0m'
-white='\033[38;2;220;220;220m'
+# Cool & Calm palette. The tier names (green/orange/yellow/red) denote usage
+# *tiers* low→max, not literal hues — the ramp stays cool until you near a
+# limit, then warms to alert.
+blue='\033[38;2;138;162;232m'    # model name — slate-indigo
+orange='\033[38;2;229;192;123m'  # 50-69% tier — soft gold
+green='\033[38;2;86;182;194m'    # 0-49% tier — teal (calm)
+cyan='\033[38;2;86;182;194m'     # numbers, cost, extra — soft teal
+red='\033[38;2;224;108;117m'     # 90%+ tier — soft red
+yellow='\033[38;2;232;155;90m'   # 70-89% tier — amber
+white='\033[38;2;200;205;214m'   # labels — cool gray
+nudge='\033[38;2;152;195;121m'   # unused-quota nudge — soft green
 dim='\033[2m'
+bar_track='\033[48;2;52;56;64m'  # cool slate track
+bar_text='\033[38;2;245;245;245m'
 reset='\033[0m'
 
 # ── Helpers ────────────────────────────────────────────
@@ -64,21 +70,43 @@ pct_color() {
     fi
 }
 
+# Background-color version of pct_color, for the filled portion of a bar.
+pct_color_bg() {
+    local pct=$1
+    if [ "$pct" -ge 90 ]; then printf '%s' '\033[48;2;165;72;80m'     # soft red
+    elif [ "$pct" -ge 70 ]; then printf '%s' '\033[48;2;170;105;55m'  # amber
+    elif [ "$pct" -ge 50 ]; then printf '%s' '\033[48;2;160;128;65m'  # gold
+    else printf '%s' '\033[48;2;46;112;122m'                          # teal
+    fi
+}
+
+# Solid bar with the "NN%" label centered *inside* the fill, bracketed.
+# The number rides on the bar instead of sitting beside it, so the whole
+# gauge is more compact than the old ●○ dots.
 build_bar() {
     local pct=$1 width=$2
     [ "$pct" -lt 0 ] 2>/dev/null && pct=0
     [ "$pct" -gt 100 ] 2>/dev/null && pct=100
     local filled=$(( pct * width / 100 ))
-    local empty=$(( width - filled ))
-    local c
-    c=$(pct_color "$pct")
-    local f="" e=""
-    for ((i=0; i<filled; i++)); do f+="●"; done
-    for ((i=0; i<empty; i++)); do e+="○"; done
-    printf "%b" "${c}${f}${dim}${e}${reset}"
+    local label="${pct}%"
+    local lablen=${#label}
+    local pad_left=$(( (width - lablen) / 2 ))
+    [ "$pad_left" -lt 0 ] && pad_left=0
+    local pad_right=$(( width - pad_left - lablen ))
+    [ "$pad_right" -lt 0 ] && pad_right=0
+    local inner
+    inner=$(printf "%*s%s%*s" "$pad_left" "" "$label" "$pad_right" "")
+    inner=${inner:0:width}
+    local left="${inner:0:filled}"
+    local right="${inner:filled}"
+    local bg_fill
+    bg_fill=$(pct_color_bg "$pct")
+    printf "%b" "${dim}[${reset}${bg_fill}${bar_text}${left}${bar_track}${bar_text}${right}${reset}${dim}]${reset}"
 }
 
-fmt_reset() {
+# Seconds from now until an ISO-8601 timestamp (negative if already past,
+# empty on parse failure). Shared by fmt_reset and the unused-quota nudge.
+secs_until() {
     local iso="$1"
     [ -z "$iso" ] || [ "$iso" = "null" ] && return
     local stripped="${iso%%.*}"
@@ -91,9 +119,13 @@ fmt_reset() {
         epoch=$(date -u -d "$stripped" +%s 2>/dev/null)
     fi
     [ -z "$epoch" ] && return
-    local now
-    now=$(date +%s)
-    local diff=$(( epoch - now ))
+    printf "%d" "$(( epoch - $(date +%s) ))"
+}
+
+fmt_reset() {
+    local diff
+    diff=$(secs_until "$1")
+    [ -z "$diff" ] && return
     [ "$diff" -le 0 ] && { printf "now"; return; }
     local days=$(( diff / 86400 ))
     local hours=$(( (diff % 86400) / 3600 ))
@@ -286,6 +318,19 @@ if [ -n "$usage" ] && echo "$usage" | jq -e . >/dev/null 2>&1; then
     fi
 fi
 
+# ── "Unused weekly quota" nudge ───────────────────────
+# When the 7-day window resets within 2 days and you've used less than half
+# of it, surface how much is still on the table — a heads-up to spend the
+# headroom before it rolls over (handy if you work in bursts).
+week_nudge=""
+if [ -n "$usage" ]; then
+    week_secs=$(secs_until "$week_reset_iso")
+    if [ -n "$week_secs" ] && [ "$week_secs" -gt 0 ] \
+        && [ "$week_secs" -le 172800 ] && [ "$week_pct" -lt 50 ]; then
+        week_nudge=$(( 100 - week_pct ))
+    fi
+fi
+
 # ── 5h → 7d contribution tracking ─────────────────────
 # Snapshot seven_day.utilization at the first render of each 5h window,
 # then show how much *this* window has added to the 7d total (delta in
@@ -346,6 +391,7 @@ if [ "$cols" -lt 80 ]; then
         line+=" ${dim}· 7d ${reset}${week_c}${week_pct}%${reset}"
         [ -n "$week_delta" ] && line+=" ${dim}+${week_delta}pp${reset}"
         [ -n "$week_reset" ] && line+=" ${dim}${week_reset}${reset}"
+        [ -n "$week_nudge" ] && line+=" ${nudge}${week_nudge}% left${reset}"
         if [ "$extra_enabled" = "true" ]; then
             line+=" ${cyan}+\$${extra_used}${reset}"
         fi
@@ -364,22 +410,20 @@ fi
 # LINE 1: Model [effort] | context bar | cost
 line1="${blue}${model}${reset}"
 [ -n "$effort_letter" ] && line1+=" ${effort_color}${effort_letter}${reset}"
-line1+=" ${dim}|${reset} "
-line1+="$(build_bar $pct_used 10) "
-line1+="${cyan}$(fmt_tok "$current")${dim}/${reset}$(fmt_tok "$size")"
-line1+=" ${dim}(${pct_used}%)${reset}"
-line1+=" ${dim}|${reset} "
-line1+="${dim}~${cost_fmt}${reset}"
+line1+=" $(build_bar $pct_used 12)"
+line1+=" ${cyan}$(fmt_tok "$current")${dim}/${reset}${cyan}$(fmt_tok "$size")${reset}"
+line1+=" ${dim}|${reset} ${dim}~${cost_fmt}${reset}"
 
 # LINE 2: 5hr | weekly | extra  (or rate-limit indicator)
 line2=""
 if [ -n "$usage" ]; then
-    line2="${white}5hr${reset} $(build_bar "$five_pct" 10) ${cyan}${five_pct}%${reset}"
+    line2="${white}5h${reset} $(build_bar "$five_pct" 12)"
     [ -n "$five_reset" ] && line2+=" ${dim}${five_reset}${reset}"
     line2+=" ${dim}|${reset} "
-    line2+="${white}7d${reset} $(build_bar "$week_pct" 10) ${cyan}${week_pct}%${reset}"
+    line2+="${white}7d${reset} $(build_bar "$week_pct" 12)"
     [ -n "$week_delta" ] && line2+=" ${dim}+${week_delta}pp 5h${reset}"
     [ -n "$week_reset" ] && line2+=" ${dim}${week_reset}${reset}"
+    [ -n "$week_nudge" ] && line2+=" ${nudge}· ${week_nudge}% left before reset${reset}"
     if [ "$extra_enabled" = "true" ]; then
         line2+=" ${dim}|${reset} "
         line2+="${white}extra${reset} ${cyan}\$${extra_used}${dim}/\$${extra_limit}${reset}"

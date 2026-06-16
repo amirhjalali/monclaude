@@ -19,21 +19,27 @@ It is a single shell script, so agents can install it, inspect it, and modify it
 ## What You Get
 
 ```
-Opus 4.6 (1M context) | ●●○○○○○○○○ 150k/1.0m (15%) | ~$1.24
-5hr ●○○○○○○○○○ 10% in 2h 6m | 7d ●○○○○○○○○○ 11% +1.2pp 5h in 4d 11h | extra $33.05/$50
+Opus 4.8 (1M context)  [▓▓ 22% ]  220k/1.0m  |  ~$1.24
+5h [▓▓▓ 34% ] in 2h 6m  |  7d [▓▓ 31% ] in 1d 4h · 69% left before reset
 ```
+
+Each gauge is a compact bar with the percentage riding inside it, so the
+number costs no extra width. Bars stay cool (teal) while you have headroom
+and warm up (gold → amber → red) as you approach a limit.
 
 **Line 1** — Session vitals
 - Model name and context size
 - Effort level indicator when present in Claude settings
-- Context window usage bar (color-coded green → orange → yellow → red)
-- Tokens used vs total with percentage
+- Context window usage bar with the percentage inside it
+- Tokens used vs total
 - Running session cost
 
 **Line 2** — Rate limits & billing
 - 5-hour rolling usage with time until reset
 - 7-day rolling usage with time until reset
 - 5-hour contribution to the 7-day window
+- "Use it" nudge when the weekly window resets soon and you still have a lot
+  unused (e.g. `· 69% left before reset`)
 - Extra credits used / monthly cap (if enabled)
 - Clear upstream error indicator when the usage API is temporarily stuck
 
@@ -120,13 +126,14 @@ Make sure `~/.claude/.credentials.json` exists and contains Claude Code OAuth cr
 
 ## Color coding
 
-The progress bars shift color as usage climbs:
+The bars stay cool while you have room and warm up as usage climbs, so a
+glance tells you whether you're fine or close to a limit:
 
 | Usage | Color |
 |-------|-------|
-| 0–49% | Green |
-| 50–69% | Orange |
-| 70–89% | Yellow |
+| 0–49% | Teal |
+| 50–69% | Gold |
+| 70–89% | Amber |
 | 90–100% | Red |
 
 ## License
