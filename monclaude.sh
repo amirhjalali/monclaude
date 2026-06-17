@@ -155,12 +155,16 @@ settings_file="${HOME}/.claude/settings.json"
 if [ -f "$settings_file" ]; then
     effort=$(jq -r '.effortLevel // empty' "$settings_file" 2>/dev/null)
 fi
-effort_letter="" effort_color=""
+# Distinct cool→warm ramp, one hue per level (not the usage palette — effort
+# is depth-of-thought, not a danger scale). Var names denote tiers, not hues:
+# $green=teal, $nudge=soft-green, $orange=gold, $yellow=amber, $red=red.
+effort_label="" effort_color=""
 case "$effort" in
-    low)    effort_letter="L"; effort_color="$green" ;;
-    medium) effort_letter="M"; effort_color="$orange" ;;
-    high)   effort_letter="H"; effort_color="$yellow" ;;
-    max)    effort_letter="X"; effort_color="$red" ;;
+    low)    effort_label="low";   effort_color="$green" ;;   # teal
+    medium) effort_label="med";   effort_color="$nudge" ;;   # soft-green
+    high)   effort_label="high";  effort_color="$orange" ;;  # gold
+    xhigh)  effort_label="xhigh"; effort_color="$yellow" ;;  # amber
+    max)    effort_label="max";   effort_color="$red" ;;     # red
 esac
 
 # ── Session data ───────────────────────────────────────
@@ -372,7 +376,7 @@ fi
 # ══════════════════════════════════════════════════════
 # COMPACT MODE (< 80 cols — phones, VPS, narrow panes)
 # One line, no bars — color-coded percentages
-# Op4.6 H 7% ~$2.25 · 5h 7% in 2h · 7d 9% in 4d
+# Op4.6 high 7% ~$2.25 · 5h 7% in 2h · 7d 9% in 4d
 # ══════════════════════════════════════════════════════
 
 if [ "$cols" -lt 80 ]; then
@@ -382,7 +386,7 @@ if [ "$cols" -lt 80 ]; then
     week_c=$(pct_color "$week_pct")
 
     line="${blue}${smodel}${reset}"
-    [ -n "$effort_letter" ] && line+=" ${effort_color}${effort_letter}${reset}"
+    [ -n "$effort_label" ] && line+=" ${effort_color}${effort_label}${reset}"
     line+=" ${pct_c}${pct_used}%${reset} ${dim}~${cost_fmt}${reset}"
 
     if [ -n "$usage" ]; then
@@ -409,7 +413,7 @@ fi
 
 # LINE 1: Model [effort] | context bar | cost
 line1="${blue}${model}${reset}"
-[ -n "$effort_letter" ] && line1+=" ${effort_color}${effort_letter}${reset}"
+[ -n "$effort_label" ] && line1+=" ${effort_color}${effort_label}${reset}"
 line1+=" $(build_bar $pct_used 12)"
 line1+=" ${cyan}$(fmt_tok "$current")${dim}/${reset}${cyan}$(fmt_tok "$size")${reset}"
 line1+=" ${dim}|${reset} ${dim}~${cost_fmt}${reset}"
