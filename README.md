@@ -19,7 +19,7 @@ It is a single shell script, so agents can install it, inspect it, and modify it
 ## What You Get
 
 ```
-Opus 4.8 (1M context)  [▓▓ 22% ]  220k/1.0m  |  ~$1.24
+Opus 4.8 (1M context)  xhigh  [▓▓ 22% ]  220k/1.0m  |  ~$1.24
 5h [▓▓▓ 34% ] in 2h 6m  |  7d [▓▓ 31% ] in 1d 4h · 69% left before reset
 ```
 
@@ -29,7 +29,7 @@ and warm up (gold → amber → red) as you approach a limit.
 
 **Line 1** — Session vitals
 - Model name and context size
-- Effort level indicator when present in Claude settings
+- Reasoning effort level — `low` / `med` / `high` / `xhigh` / `max`, color-coded (shown when set in Claude settings)
 - Context window usage bar with the percentage inside it
 - Tokens used vs total
 - Running session cost
@@ -135,6 +135,18 @@ glance tells you whether you're fine or close to a limit:
 | 50–69% | Gold |
 | 70–89% | Amber |
 | 90–100% | Red |
+
+The effort indicator uses its own cool→warm ramp next to the model name — it
+tracks depth of thinking, not how close you are to a limit, so every level
+gets a distinct hue:
+
+| Effort | Label | Color |
+|--------|-------|-------|
+| low | `low` | Teal |
+| medium | `med` | Soft green |
+| high | `high` | Gold |
+| xhigh | `xhigh` | Amber |
+| max | `max` | Red |
 
 ## License
 
