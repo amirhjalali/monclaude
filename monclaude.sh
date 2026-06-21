@@ -253,9 +253,14 @@ fi
 if $got_lock; then
     token=""
     if $is_mac; then
+        # The "Claude Code-credentials" keychain item holds the OAuth token at
+        # .claudeAiOauth.accessToken, but Claude Code now co-stores per-server
+        # MCP tokens (.mcpOAuth.*.accessToken) in the SAME blob. A naive
+        # grep '"accessToken"' | head -1 grabs whichever token serializes first
+        # — usually the wrong one — so select the field explicitly with jq, the
+        # same way the Linux branch reads ~/.claude/.credentials.json.
         token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
-            | grep -o '"accessToken":"[^"]*"' | head -1 \
-            | sed 's/"accessToken":"//;s/"$//')
+            | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
     else
         creds_file="${HOME}/.claude/.credentials.json"
         [ -f "$creds_file" ] && token=$(jq -r '.claudeAiOauth.accessToken // empty' "$creds_file" 2>/dev/null)
