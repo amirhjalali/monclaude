@@ -103,6 +103,57 @@ chmod +x ~/.claude/monclaude.sh
 3. API responses are cached for 180 seconds at `/tmp/claude/statusline-usage-cache.json` (stretched to 30 min when the upstream endpoint is stuck in its known 429 loop — see anthropics/claude-code#30930) and a `mkdir` mutex serializes refreshes across concurrent sessions
 4. Narrow terminals automatically switch to compact one-line mode
 
+## For agents & autonomous loops
+
+Agents don't have access to Claude's usage limits, so an autonomous loop can't
+tell when it's about to blow through the 5-hour or weekly window. `monclaude`
+bridges that gap — any Bash-capable agent can read current usage:
+
+```bash
+monclaude usage          # 5h 34% (resets in 2h 6m) · 7d 31% (resets in 1d 4h)
+monclaude usage --json   # machine-readable, below
+```
+
+```json
+{
+  "five_hour": { "utilization": 34, "headroom": 66, "resets_at": "…", "resets_in_seconds": 7200 },
+  "seven_day": { "utilization": 31, "headroom": 69, "resets_at": "…", "resets_in_seconds": 100800 },
+  "extra_usage": { "enabled": true, "used_usd": 1.23, "limit_usd": 50 },
+  "data_age_seconds": 12,
+  "stale": false,
+  "error": false
+}
+```
+
+- `error: true` (and exit code `1`) → no usable numbers; treat usage as unknown.
+- `stale: true` → numbers are older than the refresh window (upstream may be
+  lagging); prefer to wait rather than trust them.
+- `resets_in_seconds` → how long until the window clears, so a loop can sleep
+  exactly that long instead of polling blindly.
+
+**Loop guard** — run task `T` every few minutes, but only while 5-hour usage
+stays under a threshold:
+
+```bash
+THRESH=80
+u=$(monclaude usage --json)
+if [ "$(echo "$u" | jq -r '.error')" = "true" ] \
+   || [ "$(echo "$u" | jq -r '.stale')" = "true" ]; then
+  echo "usage unknown/stale — waiting"; sleep 300; exit 0
+fi
+pct=$(echo "$u" | jq -r '.five_hour.utilization')
+if [ "$pct" -ge "$THRESH" ]; then
+  wait=$(echo "$u" | jq -r 'if (.five_hour.resets_in_seconds // 0) > 0 then .five_hour.resets_in_seconds else 600 end')
+  echo "5h usage ${pct}% ≥ ${THRESH}% — sleeping ${wait}s until reset"
+  sleep "$wait"; exit 0
+fi
+# Standalone guard script — if you inline this in a `while` loop, use `continue` instead of `exit 0`.
+# under budget — do the work
+```
+
+The numbers describe the Claude/Anthropic account tied to your local OAuth
+token — not OpenAI Codex or other providers, which have separate limits.
+
 ## Verify
 
 Run ShellCheck locally:

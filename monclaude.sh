@@ -12,10 +12,24 @@
 # MONCLAUDE_COLS env var override.
 set -f
 
-input=$(cat)
-if [ -z "$input" ]; then
-    printf "Claude"
-    exit 0
+# ── Subcommand dispatch ────────────────────────────────
+# Recognized subcommands must be handled WITHOUT reading stdin (cat would
+# block on a TTY). We only set flags here; the commands run further down,
+# after the helper functions and cache config they depend on are defined.
+cmd_is_usage=false
+cmd_is_help=false
+case "${1:-}" in
+    usage)            cmd_is_usage=true ;;
+    -h|--help|help)   cmd_is_help=true ;;
+esac
+
+# Only the status-line path consumes session JSON from stdin.
+if [ "$cmd_is_usage" = false ] && [ "$cmd_is_help" = false ]; then
+    input=$(cat)
+    if [ -z "$input" ]; then
+        printf "Claude"
+        exit 0
+    fi
 fi
 
 # ── Platform ───────────────────────────────────────────
@@ -25,7 +39,7 @@ is_mac=false
 # ── Terminal width ─────────────────────────────────────
 # MONCLAUDE_COLS override > tmux pane width > tput via /dev/tty > tput > 80
 cols=${MONCLAUDE_COLS:-$(tmux display-message -p '#{pane_width}' 2>/dev/null \
-    || tput cols </dev/tty 2>/dev/null \
+    || (tput cols </dev/tty) 2>/dev/null \
     || tput cols 2>/dev/null \
     || echo 80)}
 [ "$cols" -lt 20 ] && cols=40
@@ -149,6 +163,218 @@ short_model() {
     printf "%s" "$m"
 }
 
+# ── Cache config ──────────────────────────────────────
+# Shared by the status-line path and ensure_usage_cache (defined below).
+# Cache strategy:
+#   - file contents = last VALID response (never overwritten by errors)
+#   - file mtime    = last attempt (always bumped to enforce cooldown)
+#   - mkdir lock    = mutex so only ONE session refreshes per TTL window
+#
+# Without the mutex, N concurrent sessions that hit the status line in the
+# same ~100ms after the TTL expires will ALL see the stale cache and ALL
+# fire the API, tripping rate limits in a burst. mkdir is atomic on POSIX,
+# so we use it as a portable cross-process mutex (flock isn't built in on
+# macOS).
+#
+# Error backoff: Anthropic's /api/oauth/usage endpoint has a known upstream
+# bug (claude-code#30930, #31021, #31637) where it can get stuck returning
+# HTTP 429 for hours regardless of retry cadence. When we detect that stuck
+# state (cache file exists but has no valid data), stretch TTL to 30 min
+# so we stop pressuring the broken endpoint. Normal 180s cadence resumes
+# automatically once a successful response lands.
+cache_dir="${MONCLAUDE_CACHE_DIR:-/tmp/claude}"
+cache_file="$cache_dir/statusline-usage-cache.json"
+lock_dir="$cache_dir/statusline-refresh.lock"
+cache_ttl=180
+error_ttl=1800
+lock_stale_secs=5
+mkdir -p "$cache_dir"
+
+# ── Subcommands (agent-facing) ─────────────────────────
+cmd_help() {
+    cat <<'EOF'
+monclaude — a rich status line for Claude Code
+
+As a status line: configure it as your Claude Code statusLine command; it reads
+session JSON on stdin and renders model / context / cost / rate-limit info.
+
+Subcommands (for humans and agents):
+  monclaude usage          Print current Claude usage as one human-readable line.
+  monclaude usage --json   Print current usage as JSON (for agents/automation).
+  monclaude --help         Show this help.
+
+usage --json fields:
+  five_hour / seven_day : { utilization, headroom, resets_at, resets_in_seconds }
+  extra_usage           : { enabled, used_usd, limit_usd }
+  data_age_seconds, stale, error
+Exit status: 0 = usable numbers (act when stale=false); 1 = no data (error=true).
+
+The numbers describe the Claude/Anthropic account tied to your local OAuth
+token — not OpenAI/Codex or other providers.
+
+https://github.com/amirhjalali/monclaude
+EOF
+}
+
+# Make $cache_file current: reuse the live response if it is within TTL,
+# otherwise fetch under a mkdir mutex with the known-429 error backoff.
+# Shared by the status line and `monclaude usage` so there is one fetch path.
+ensure_usage_cache() {
+    local effective_ttl=$cache_ttl
+    if [ -f "$cache_file" ]; then
+        local probe
+        probe=$(cat "$cache_file" 2>/dev/null)
+        if [ -z "$probe" ] || ! echo "$probe" | jq -e '.five_hour' >/dev/null 2>&1; then
+            effective_ttl=$error_ttl
+        fi
+    fi
+
+    local needs_refresh=true now
+    if [ -f "$cache_file" ]; then
+        local cache_mtime
+        if $is_mac; then cache_mtime=$(stat -f %m "$cache_file" 2>/dev/null)
+        else cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null); fi
+        now=$(date +%s)
+        if [ $(( now - cache_mtime )) -lt $effective_ttl ]; then
+            needs_refresh=false
+        fi
+    fi
+    $needs_refresh || return 0
+
+    # Clear a stale lock left by a session killed mid-refresh.
+    if [ -d "$lock_dir" ]; then
+        local lock_mtime
+        if $is_mac; then lock_mtime=$(stat -f %m "$lock_dir" 2>/dev/null)
+        else lock_mtime=$(stat -c %Y "$lock_dir" 2>/dev/null); fi
+        now=$(date +%s)
+        if [ $(( now - lock_mtime )) -gt $lock_stale_secs ]; then
+            rmdir "$lock_dir" 2>/dev/null
+        fi
+    fi
+
+    # Only one session refreshes per TTL window; others read the cache.
+    mkdir "$lock_dir" 2>/dev/null || return 0
+    trap 'rmdir "$lock_dir" 2>/dev/null' EXIT HUP INT TERM
+
+    local token=""
+    if $is_mac; then
+        token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
+            | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
+    else
+        local creds_file="${HOME}/.claude/.credentials.json"
+        [ -f "$creds_file" ] && token=$(jq -r '.claudeAiOauth.accessToken // empty' "$creds_file" 2>/dev/null)
+    fi
+
+    if [ -n "$token" ]; then
+        local resp
+        resp=$(curl -s --max-time 3 \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $token" \
+            -H "anthropic-beta: oauth-2025-04-20" \
+            "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
+        if [ -n "$resp" ] && echo "$resp" | jq -e '.five_hour' >/dev/null 2>&1; then
+            # Stamp fetched_at so `usage` can report true data age even after an
+            # error-state touch bumps the file mtime.
+            local tmp_file="${cache_file}.tmp.$$"
+            if echo "$resp" | jq --argjson t "$(date +%s)" '. + {fetched_at: $t}' > "$tmp_file" 2>/dev/null; then
+                mv "$tmp_file" "$cache_file" 2>/dev/null || rm -f "$tmp_file"
+            fi
+        else
+            # Error/empty/malformed — keep last-good contents, bump mtime for cooldown.
+            if [ -f "$cache_file" ]; then touch "$cache_file" 2>/dev/null
+            else : > "$cache_file"; fi
+        fi
+    fi
+
+    rmdir "$lock_dir" 2>/dev/null
+    trap - EXIT HUP INT TERM
+}
+
+# Emit current usage as JSON (mode=json) or one human line (mode=plain).
+cmd_usage() {
+    local mode="${1:-plain}"
+    ensure_usage_cache
+
+    local cached=""
+    [ -f "$cache_file" ] && cached=$(cat "$cache_file" 2>/dev/null)
+    if [ -z "$cached" ] || ! echo "$cached" | jq -e '.five_hour' >/dev/null 2>&1; then
+        if [ "$mode" = json ]; then
+            jq -n '{five_hour:null,seven_day:null,extra_usage:{enabled:false,used_usd:null,limit_usd:null},data_age_seconds:null,stale:true,error:true}'
+        else
+            printf 'usage api down (upstream)\n'
+        fi
+        return 1
+    fi
+
+    local now five_util week_util five_iso week_iso fetched_at
+    now=$(date +%s)
+    five_util=$(echo "$cached" | jq -r '.five_hour.utilization // 0' | awk '{printf "%.0f", $1}')
+    week_util=$(echo "$cached" | jq -r '.seven_day.utilization // 0' | awk '{printf "%.0f", $1}')
+    five_iso=$(echo "$cached" | jq -r '.five_hour.resets_at // empty')
+    week_iso=$(echo "$cached" | jq -r '.seven_day.resets_at // empty')
+    fetched_at=$(echo "$cached" | jq -r '.fetched_at // empty')
+
+    local five_secs week_secs data_age stale
+    five_secs=$(secs_until "$five_iso")
+    week_secs=$(secs_until "$week_iso")
+    stale=false
+    if [ -n "$fetched_at" ]; then
+        data_age=$(( now - fetched_at ))
+        [ "$data_age" -gt "$cache_ttl" ] && stale=true
+    else
+        data_age=""        # unknown age → treat as stale (conservative)
+        stale=true
+    fi
+
+    local extra_enabled extra_used extra_limit
+    extra_enabled=$(echo "$cached" | jq -r '.extra_usage.is_enabled // false')
+    if [ "$extra_enabled" = true ]; then
+        extra_used=$(echo "$cached" | jq -r '.extra_usage.used_credits // 0' | awk '{printf "%.2f", $1/100}')
+        extra_limit=$(echo "$cached" | jq -r '.extra_usage.monthly_limit // 0' | awk '{printf "%.0f", $1/100}')
+    else
+        extra_used=null
+        extra_limit=null
+    fi
+
+    if [ "$mode" = json ]; then
+        jq -n \
+            --argjson fu "$five_util" --argjson fh "$(( 100 - five_util ))" \
+            --arg     fr "$five_iso"  --argjson fs "${five_secs:-null}" \
+            --argjson wu "$week_util" --argjson wh "$(( 100 - week_util ))" \
+            --arg     wr "$week_iso"  --argjson ws "${week_secs:-null}" \
+            --argjson ee "$extra_enabled" --argjson eu "$extra_used" --argjson el "$extra_limit" \
+            --argjson da "${data_age:-null}" --argjson st "$stale" \
+            '{
+               five_hour:   {utilization: $fu, headroom: $fh, resets_at: (if $fr=="" then null else $fr end), resets_in_seconds: $fs},
+               seven_day:   {utilization: $wu, headroom: $wh, resets_at: (if $wr=="" then null else $wr end), resets_in_seconds: $ws},
+               extra_usage: {enabled: $ee, used_usd: $eu, limit_usd: $el},
+               data_age_seconds: $da,
+               stale: $st,
+               error: false
+             }'
+    else
+        local line="5h ${five_util}%" fr wr
+        fr=$(fmt_reset "$five_iso")
+        wr=$(fmt_reset "$week_iso")
+        [ -n "$fr" ] && line="$line (resets $fr)"
+        line="$line · 7d ${week_util}%"
+        [ -n "$wr" ] && line="$line (resets $wr)"
+        printf '%s\n' "$line"
+    fi
+    return 0
+}
+
+if [ "$cmd_is_help" = true ]; then
+    cmd_help
+    exit 0
+fi
+
+if [ "$cmd_is_usage" = true ]; then
+    if [ "${2:-}" = "--json" ]; then cmd_usage json; else cmd_usage plain; fi
+    exit $?
+fi
+
 # ── Effort level (from settings, not in status JSON) ──
 effort=""
 settings_file="${HOME}/.claude/settings.json"
@@ -182,116 +408,7 @@ cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 cost_fmt=$(awk "BEGIN {printf \"$%.2f\", $cost}")
 
 # ── Usage API (cached) ────────────────────────────────
-# Cache strategy:
-#   - file contents = last VALID response (never overwritten by errors)
-#   - file mtime    = last attempt (always bumped to enforce cooldown)
-#   - mkdir lock    = mutex so only ONE session refreshes per TTL window
-#
-# Without the mutex, N concurrent sessions that hit the status line in the
-# same ~100ms after the TTL expires will ALL see the stale cache and ALL
-# fire the API, tripping rate limits in a burst. mkdir is atomic on POSIX,
-# so we use it as a portable cross-process mutex (flock isn't built in on
-# macOS).
-#
-# Error backoff: Anthropic's /api/oauth/usage endpoint has a known upstream
-# bug (claude-code#30930, #31021, #31637) where it can get stuck returning
-# HTTP 429 for hours regardless of retry cadence. When we detect that stuck
-# state (cache file exists but has no valid data), stretch TTL to 30 min
-# so we stop pressuring the broken endpoint. Normal 180s cadence resumes
-# automatically once a successful response lands.
-cache_file="/tmp/claude/statusline-usage-cache.json"
-lock_dir="/tmp/claude/statusline-refresh.lock"
-cache_ttl=180
-error_ttl=1800
-lock_stale_secs=5
-mkdir -p /tmp/claude
-
-# If the cache is currently in a stuck/error state, use the longer error TTL
-effective_ttl=$cache_ttl
-if [ -f "$cache_file" ]; then
-    probe=$(cat "$cache_file" 2>/dev/null)
-    if [ -z "$probe" ] || ! echo "$probe" | jq -e '.five_hour' >/dev/null 2>&1; then
-        effective_ttl=$error_ttl
-    fi
-fi
-
-needs_refresh=true
-if [ -f "$cache_file" ]; then
-    if $is_mac; then
-        cache_mtime=$(stat -f %m "$cache_file" 2>/dev/null)
-    else
-        cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null)
-    fi
-    now=$(date +%s)
-    if [ $(( now - cache_mtime )) -lt $effective_ttl ]; then
-        needs_refresh=false
-    fi
-fi
-
-# Try to acquire the refresh lock. If another session is already refreshing,
-# we skip our own attempt and just read whatever's in the cache.
-got_lock=false
-if $needs_refresh; then
-    # Clean stale lock from a session that was killed mid-refresh
-    if [ -d "$lock_dir" ]; then
-        if $is_mac; then
-            lock_mtime=$(stat -f %m "$lock_dir" 2>/dev/null)
-        else
-            lock_mtime=$(stat -c %Y "$lock_dir" 2>/dev/null)
-        fi
-        now=$(date +%s)
-        if [ $(( now - lock_mtime )) -gt $lock_stale_secs ]; then
-            rmdir "$lock_dir" 2>/dev/null
-        fi
-    fi
-    if mkdir "$lock_dir" 2>/dev/null; then
-        got_lock=true
-        trap 'rmdir "$lock_dir" 2>/dev/null' EXIT HUP INT TERM
-    fi
-fi
-
-if $got_lock; then
-    token=""
-    if $is_mac; then
-        # The "Claude Code-credentials" keychain item holds the OAuth token at
-        # .claudeAiOauth.accessToken, but Claude Code now co-stores per-server
-        # MCP tokens (.mcpOAuth.*.accessToken) in the SAME blob. A naive
-        # grep '"accessToken"' | head -1 grabs whichever token serializes first
-        # — usually the wrong one — so select the field explicitly with jq, the
-        # same way the Linux branch reads ~/.claude/.credentials.json.
-        token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
-            | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
-    else
-        creds_file="${HOME}/.claude/.credentials.json"
-        [ -f "$creds_file" ] && token=$(jq -r '.claudeAiOauth.accessToken // empty' "$creds_file" 2>/dev/null)
-    fi
-    if [ -n "$token" ]; then
-        resp=$(curl -s --max-time 3 \
-            -H "Accept: application/json" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $token" \
-            -H "anthropic-beta: oauth-2025-04-20" \
-            "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-        if [ -n "$resp" ] && echo "$resp" | jq -e '.five_hour' >/dev/null 2>&1; then
-            # Fresh valid data — atomic write so concurrent readers never see
-            # a partial file.
-            tmp_file="${cache_file}.tmp.$$"
-            if echo "$resp" > "$tmp_file" 2>/dev/null; then
-                mv "$tmp_file" "$cache_file" 2>/dev/null || rm -f "$tmp_file"
-            fi
-        else
-            # Error, empty, or malformed — preserve last-good contents, just
-            # bump mtime so we honor the cooldown before the next retry.
-            if [ -f "$cache_file" ]; then
-                touch "$cache_file" 2>/dev/null
-            else
-                : > "$cache_file"
-            fi
-        fi
-    fi
-    rmdir "$lock_dir" 2>/dev/null
-    trap - EXIT HUP INT TERM
-fi
+ensure_usage_cache
 
 # Read last-good cached response (only accept real usage payloads).
 # If the cache file exists but contains no valid data, we've tried and
@@ -345,7 +462,7 @@ fi
 # then show how much *this* window has added to the 7d total (delta in
 # percentage points). Baseline rolls over automatically when the
 # five_hour.resets_at timestamp changes.
-baseline_file="/tmp/claude/statusline-5h-baseline.json"
+baseline_file="$cache_dir/statusline-5h-baseline.json"
 week_delta=""
 if [ -n "$usage" ]; then
     week_pct_raw=$(echo "$usage" | jq -r '.seven_day.utilization // 0')
