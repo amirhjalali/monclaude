@@ -163,6 +163,21 @@ short_model() {
     printf "%s" "$m"
 }
 
+# Per-model scoped weekly caps (e.g. a separate Fable limit) live in the
+# `limits` array of the usage response, not the top-level five_hour/seven_day
+# fields. Reads the usage JSON on stdin, emits one TSV line per scoped entry:
+# name <TAB> percent <TAB> resets_at <TAB> is_active
+scoped_limits_tsv() {
+    jq -r '
+        (.limits // [])[]
+        | select(.kind == "weekly_scoped")
+        | [ (.scope.model.display_name // .scope.surface // "scoped"),
+            ((.percent // 0) | round | tostring),
+            (.resets_at // ""),
+            ((.is_active // false) | tostring) ]
+        | @tsv' 2>/dev/null
+}
+
 # ── Cache config ──────────────────────────────────────
 # Shared by the status-line path and ensure_usage_cache (defined below).
 # Cache strategy:
@@ -205,6 +220,9 @@ Subcommands (for humans and agents):
 
 usage --json fields:
   five_hour / seven_day : { utilization, headroom, resets_at, resets_in_seconds }
+  weekly_scoped         : [ { scope, utilization, headroom, resets_at,
+                              resets_in_seconds, severity, is_active } ]
+                          per-model weekly caps (e.g. Fable) — [] if none
   extra_usage           : { enabled, used_usd, limit_usd }
   data_age_seconds, stale, error
 Exit status: 0 = usable numbers (act when stale=false); 1 = no data (error=true).
@@ -300,7 +318,7 @@ cmd_usage() {
     [ -f "$cache_file" ] && cached=$(cat "$cache_file" 2>/dev/null)
     if [ -z "$cached" ] || ! echo "$cached" | jq -e '.five_hour' >/dev/null 2>&1; then
         if [ "$mode" = json ]; then
-            jq -n '{five_hour:null,seven_day:null,extra_usage:{enabled:false,used_usd:null,limit_usd:null},data_age_seconds:null,stale:true,error:true}'
+            jq -n '{five_hour:null,seven_day:null,weekly_scoped:[],extra_usage:{enabled:false,used_usd:null,limit_usd:null},data_age_seconds:null,stale:true,error:true}'
         else
             printf 'usage api down (upstream)\n'
         fi
@@ -337,17 +355,36 @@ cmd_usage() {
         extra_limit=null
     fi
 
+    # Per-model scoped weekly caps (e.g. Fable) from the `limits` array.
+    # resets_in_seconds is computed in jq; the try/catch tolerates timestamps
+    # it can't parse (emits null rather than failing the whole array).
+    local scoped_json
+    scoped_json=$(echo "$cached" | jq -c --argjson now "$now" '
+        [ (.limits // [])[]
+          | select(.kind == "weekly_scoped")
+          | ((.percent // 0) | round) as $p
+          | { scope: (.scope.model.display_name // .scope.surface // "scoped"),
+              utilization: $p,
+              headroom: (100 - $p),
+              resets_at: .resets_at,
+              resets_in_seconds: (try ((.resets_at | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) - $now) catch null),
+              severity: .severity,
+              is_active: (.is_active // false) } ]' 2>/dev/null)
+    [ -z "$scoped_json" ] && scoped_json="[]"
+
     if [ "$mode" = json ]; then
         jq -n \
             --argjson fu "$five_util" --argjson fh "$(( 100 - five_util ))" \
             --arg     fr "$five_iso"  --argjson fs "${five_secs:-null}" \
             --argjson wu "$week_util" --argjson wh "$(( 100 - week_util ))" \
             --arg     wr "$week_iso"  --argjson ws "${week_secs:-null}" \
+            --argjson sc "$scoped_json" \
             --argjson ee "$extra_enabled" --argjson eu "$extra_used" --argjson el "$extra_limit" \
             --argjson da "${data_age:-null}" --argjson st "$stale" \
             '{
                five_hour:   {utilization: $fu, headroom: $fh, resets_at: (if $fr=="" then null else $fr end), resets_in_seconds: $fs},
                seven_day:   {utilization: $wu, headroom: $wh, resets_at: (if $wr=="" then null else $wr end), resets_in_seconds: $ws},
+               weekly_scoped: $sc,
                extra_usage: {enabled: $ee, used_usd: $eu, limit_usd: $el},
                data_age_seconds: $da,
                stale: $st,
@@ -360,6 +397,13 @@ cmd_usage() {
         [ -n "$fr" ] && line="$line (resets $fr)"
         line="$line · 7d ${week_util}%"
         [ -n "$wr" ] && line="$line (resets $wr)"
+        local s_name s_pct s_iso sr
+        while IFS=$'\t' read -r s_name s_pct s_iso _; do
+            [ -z "$s_name" ] && continue
+            line="$line · ${s_name} ${s_pct}%"
+            sr=$(fmt_reset "$s_iso")
+            [ -n "$sr" ] && line="$line (resets $sr)"
+        done <<< "$(echo "$cached" | scoped_limits_tsv)"
         printf '%s\n' "$line"
     fi
     return 0
@@ -444,6 +488,10 @@ if [ -n "$usage" ] && echo "$usage" | jq -e . >/dev/null 2>&1; then
     fi
 fi
 
+# Per-model scoped weekly caps (e.g. Fable) — TSV lines, empty if none.
+scoped_limits=""
+[ -n "$usage" ] && scoped_limits=$(echo "$usage" | scoped_limits_tsv)
+
 # ── "Unused weekly quota" nudge ───────────────────────
 # When the 7-day window resets within 2 days and you've used less than half
 # of it, surface how much is still on the table — a heads-up to spend the
@@ -518,6 +566,15 @@ if [ "$cols" -lt 80 ]; then
         [ -n "$week_delta" ] && line+=" ${dim}+${week_delta}pp${reset}"
         [ -n "$week_reset" ] && line+=" ${dim}${week_reset}${reset}"
         [ -n "$week_nudge" ] && line+=" ${nudge}${week_nudge}% left${reset}"
+        if [ -n "$scoped_limits" ]; then
+            while IFS=$'\t' read -r s_name s_pct s_iso _; do
+                [ -z "$s_name" ] && continue
+                s_c=$(pct_color "$s_pct")
+                line+=" ${dim}· ${s_name} ${reset}${s_c}${s_pct}%${reset}"
+                s_reset=$(fmt_reset "$s_iso")
+                [ -n "$s_reset" ] && line+=" ${dim}${s_reset}${reset}"
+            done <<< "$scoped_limits"
+        fi
         if [ "$extra_enabled" = "true" ]; then
             line+=" ${cyan}+\$${extra_used}${reset}"
         fi
@@ -550,6 +607,14 @@ if [ -n "$usage" ]; then
     [ -n "$week_delta" ] && line2+=" ${dim}+${week_delta}pp 5h${reset}"
     [ -n "$week_reset" ] && line2+=" ${dim}${week_reset}${reset}"
     [ -n "$week_nudge" ] && line2+=" ${nudge}· ${week_nudge}% left before reset${reset}"
+    if [ -n "$scoped_limits" ]; then
+        while IFS=$'\t' read -r s_name s_pct s_iso _; do
+            [ -z "$s_name" ] && continue
+            line2+=" ${dim}|${reset} ${white}${s_name}${reset} $(build_bar "$s_pct" 12)"
+            s_reset=$(fmt_reset "$s_iso")
+            [ -n "$s_reset" ] && line2+=" ${dim}${s_reset}${reset}"
+        done <<< "$scoped_limits"
+    fi
     if [ "$extra_enabled" = "true" ]; then
         line2+=" ${dim}|${reset} "
         line2+="${white}extra${reset} ${cyan}\$${extra_used}${dim}/\$${extra_limit}${reset}"

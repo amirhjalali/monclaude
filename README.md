@@ -20,7 +20,7 @@ It is a single shell script, so agents can install it, inspect it, and modify it
 
 ```
 Opus 4.8 (1M context)  xhigh  [▓▓ 22% ]  220k/1.0m  |  ~$1.24
-5h [▓▓▓ 34% ] in 2h 6m  |  7d [▓▓ 31% ] in 1d 4h · 69% left before reset
+5h [▓▓▓ 34% ] in 2h 6m  |  7d [▓▓ 31% ] in 1d 4h  |  Fable [▓ 17% ] in 1d 4h
 ```
 
 Each gauge is a compact bar with the percentage riding inside it, so the
@@ -37,6 +37,8 @@ and warm up (gold → amber → red) as you approach a limit.
 **Line 2** — Rate limits & billing
 - 5-hour rolling usage with time until reset
 - 7-day rolling usage with time until reset
+- Per-model weekly caps when your plan has them (e.g. a separate Fable
+  limit that burns faster than the overall weekly window)
 - 5-hour contribution to the 7-day window
 - "Use it" nudge when the weekly window resets soon and you still have a lot
   unused (e.g. `· 69% left before reset`)
@@ -118,6 +120,10 @@ monclaude usage --json   # machine-readable, below
 {
   "five_hour": { "utilization": 34, "headroom": 66, "resets_at": "…", "resets_in_seconds": 7200 },
   "seven_day": { "utilization": 31, "headroom": 69, "resets_at": "…", "resets_in_seconds": 100800 },
+  "weekly_scoped": [
+    { "scope": "Fable", "utilization": 17, "headroom": 83, "resets_at": "…",
+      "resets_in_seconds": 100800, "severity": "normal", "is_active": true }
+  ],
   "extra_usage": { "enabled": true, "used_usd": 1.23, "limit_usd": 50 },
   "data_age_seconds": 12,
   "stale": false,
@@ -125,6 +131,9 @@ monclaude usage --json   # machine-readable, below
 }
 ```
 
+- `weekly_scoped` → per-model weekly caps (e.g. Fable) when your plan has
+  them; `[]` otherwise. `is_active: true` marks the limit currently binding
+  you — a loop should guard on this one, not just the overall `seven_day`.
 - `error: true` (and exit code `1`) → no usable numbers; treat usage as unknown.
 - `stale: true` → numbers are older than the refresh window (upstream may be
   lagging); prefer to wait rather than trust them.
