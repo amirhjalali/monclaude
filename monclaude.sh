@@ -3,7 +3,7 @@
 # https://github.com/amirhjalali/monclaude
 #
 # Full mode (>= 80 cols):
-#   Line 1: Model | context window bar | session cost
+#   Line 1: [folder branch |] Model | context window bar | session cost
 #   Line 2: 5hr usage | weekly usage | extra credits
 # Compact mode (< 80 cols — phones, narrow terminals):
 #   Single line: Model % cost · 5h % ↻reset · 7d % ↻reset
@@ -442,6 +442,18 @@ model=$(echo "$input" | jq -r '.model.display_name // "Claude"')
 size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
 [ "$size" -eq 0 ] 2>/dev/null && size=200000
 
+# Where this session is: folder name and git branch. Helps tell a dozen
+# open sessions apart. MONCLAUDE_NO_LOCATION=1 turns it off.
+loc_dir=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // empty')
+loc_folder=""
+loc_branch=""
+if [ -z "${MONCLAUDE_NO_LOCATION:-}" ] && [ -n "$loc_dir" ] && [ -d "$loc_dir" ]; then
+    if [ "$loc_dir" = "$HOME" ]; then loc_folder="~"; else loc_folder=$(basename "$loc_dir"); fi
+    loc_branch=$(git -C "$loc_dir" symbolic-ref --quiet --short HEAD 2>/dev/null \
+        || git -C "$loc_dir" rev-parse --short HEAD 2>/dev/null)
+    [ "${#loc_branch}" -gt 24 ] && loc_branch="${loc_branch:0:23}…"
+fi
+
 input_tok=$(echo "$input" | jq -r '.context_window.current_usage.input_tokens // 0')
 cache_create=$(echo "$input" | jq -r '.context_window.current_usage.cache_creation_input_tokens // 0')
 cache_read=$(echo "$input" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0')
@@ -590,8 +602,15 @@ fi
 # FULL MODE (>= 80 cols — desktop / wide terminal)
 # ══════════════════════════════════════════════════════
 
-# LINE 1: Model [effort] | context bar | cost
-line1="${blue}${model}${reset}"
+# LINE 1: [folder branch |] Model [effort] | context bar | cost
+# Location only when there is room for it (>= 100 cols).
+line1=""
+if [ -n "$loc_folder" ] && [ "$cols" -ge 100 ]; then
+    line1="${white}${loc_folder}${reset}"
+    [ -n "$loc_branch" ] && line1+=" ${dim}⎇ ${loc_branch}${reset}"
+    line1+=" ${dim}|${reset} "
+fi
+line1+="${blue}${model}${reset}"
 [ -n "$effort_label" ] && line1+=" ${effort_color}${effort_label}${reset}"
 line1+=" $(build_bar $pct_used 12)"
 line1+=" ${cyan}$(fmt_tok "$current")${dim}/${reset}${cyan}$(fmt_tok "$size")${reset}"

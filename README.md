@@ -19,7 +19,7 @@ It is a single shell script, so agents can install it, inspect it, and modify it
 ## What You Get
 
 ```
-Opus 4.8 (1M context)  xhigh  [▓▓ 22% ]  220k/1.0m  |  ~$1.24
+monclaude ⎇ main | Opus 4.8 (1M context)  xhigh  [▓▓ 22% ]  220k/1.0m  |  ~$1.24
 5h [▓▓▓ 34% ] in 2h 6m  |  7d [▓▓ 31% ] in 1d 4h  |  Fable [▓ 17% ] in 1d 4h
 ```
 
@@ -28,6 +28,8 @@ number costs no extra width. Bars stay cool (teal) while you have headroom
 and warm up (gold → amber → red) as you approach a limit.
 
 **Line 1** — Session vitals
+- Folder and git branch of the session, so a dozen open sessions are easy to
+  tell apart (shown at 100+ columns; `MONCLAUDE_NO_LOCATION=1` hides it)
 - Model name and context size
 - Reasoning effort level — `low` / `med` / `high` / `xhigh` / `max`, color-coded (shown when set in Claude settings)
 - Context window usage bar with the percentage inside it
