@@ -123,6 +123,11 @@ build_bar() {
 secs_until() {
     local iso="$1"
     [ -z "$iso" ] || [ "$iso" = "null" ] && return
+    # Unix epoch seconds (Codex reports resets this way).
+    case "$iso" in
+        *[!0-9]*) ;;
+        *) printf "%d" "$(( iso - $(date +%s) ))"; return ;;
+    esac
     local stripped="${iso%%.*}"
     stripped="${stripped%%Z}"
     stripped="${stripped%%+*}"
@@ -178,6 +183,58 @@ scoped_limits_tsv() {
         | @tsv' 2>/dev/null
 }
 
+# Codex (OpenAI) rate limits. Codex has no usage endpoint we can poll, but it
+# logs a rate_limits snapshot in every token_count event of its session
+# rollouts (~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl). Take the newest
+# snapshot per limit_id from the most recent rollouts and emit one TSV line
+# per window: name <TAB> window <TAB> percent <TAB> resets_at_epoch
+# A window whose reset has passed has rolled over, so it reads 0%.
+# The main "codex" limit is always shown; others (e.g. Spark) only when used.
+# Result is cached for codex_ttl seconds to keep renders cheap.
+codex_limits_tsv() {
+    [ -n "${MONCLAUDE_NO_CODEX:-}" ] && return
+    local sessions="${CODEX_HOME:-$HOME/.codex}/sessions"
+    [ -d "$sessions" ] || return
+    local out="$cache_dir/codex-limits.tsv" mtime now
+    now=$(date +%s)
+    if [ -f "$out" ]; then
+        if $is_mac; then mtime=$(stat -f %m "$out" 2>/dev/null)
+        else mtime=$(stat -c %Y "$out" 2>/dev/null); fi
+        if [ $(( now - ${mtime:-0} )) -lt "$codex_ttl" ]; then
+            cat "$out"; return
+        fi
+    fi
+    local files f tmp="$out.tmp.$$"
+    # Rollout paths sort chronologically by name; newest 5 are enough.
+    files=$(find "$sessions" -name 'rollout-*.jsonl' -mtime -14 2>/dev/null | sort | tail -5)
+    {
+        for f in $files; do
+            grep -h '"rate_limits"' "$f" 2>/dev/null | tail -20
+        done
+    } | jq -rs --argjson now "$now" '
+        [ .[] | select(.payload.rate_limits.limit_id?)
+              | {ts: .timestamp, rl: .payload.rate_limits} ]
+        | group_by(.rl.limit_id) | map(max_by(.ts).rl)
+        | sort_by(if .limit_id == "codex" then 0 else 1 end)
+        | .[]
+        | (if .limit_id == "codex" then "Codex" else (.limit_name // .limit_id) end) as $name
+        | .limit_id as $id
+        | (.primary, .secondary) | select(. != null)
+        | (if (.resets_at // 0) > 0 and .resets_at <= $now then 0
+           else ((.used_percent // 0) | round) end) as $p
+        | select($id == "codex" or $p > 0)
+        | [ $name,
+            (if .window_minutes == 300 then "5h"
+             elif .window_minutes == 10080 then "7d"
+             elif (.window_minutes // 0) >= 1440 then "\((.window_minutes / 1440) | floor)d"
+             else "\((.window_minutes // 0) / 60 | floor)h" end),
+            ($p | tostring),
+            ((.resets_at // "") | tostring) ]
+        | @tsv' 2>/dev/null > "$tmp"
+    mv "$tmp" "$out" 2>/dev/null || rm -f "$tmp"
+    cat "$out" 2>/dev/null
+}
+
 # ── Cache config ──────────────────────────────────────
 # Shared by the status-line path and ensure_usage_cache (defined below).
 # Cache strategy:
@@ -201,6 +258,7 @@ cache_dir="${MONCLAUDE_CACHE_DIR:-/tmp/claude}"
 cache_file="$cache_dir/statusline-usage-cache.json"
 lock_dir="$cache_dir/statusline-refresh.lock"
 cache_ttl=180
+codex_ttl=60
 error_ttl=1800
 lock_stale_secs=5
 mkdir -p "$cache_dir"
@@ -223,12 +281,16 @@ usage --json fields:
   weekly_scoped         : [ { scope, utilization, headroom, resets_at,
                               resets_in_seconds, severity, is_active } ]
                           per-model weekly caps (e.g. Fable) — [] if none
+  codex                 : [ { limit, window, utilization, headroom, resets_at
+                              (epoch), resets_in_seconds } ] — from local
+                          Codex session logs; [] if Codex isn't used here
   extra_usage           : { enabled, used_usd, limit_usd }
   data_age_seconds, stale, error
 Exit status: 0 = usable numbers (act when stale=false); 1 = no data (error=true).
 
-The numbers describe the Claude/Anthropic account tied to your local OAuth
-token — not OpenAI/Codex or other providers.
+The five_hour/seven_day numbers describe the Claude account tied to your local
+OAuth token. The codex array is read from ~/.codex (as of Codex's last turn);
+set MONCLAUDE_NO_CODEX=1 to hide it.
 
 https://github.com/amirhjalali/monclaude
 EOF
@@ -309,6 +371,32 @@ ensure_usage_cache() {
     trap - EXIT HUP INT TERM
 }
 
+# Codex windows as a JSON array for `usage --json` ([] when none).
+codex_limits_json() {
+    local now="$1"
+    codex_limits_tsv | jq -Rsc --argjson now "$now" '
+        [ split("\n")[] | select(length > 0) | split("\t")
+          | { limit: .[0], window: .[1],
+              utilization: (.[2] | tonumber), headroom: (100 - (.[2] | tonumber)),
+              resets_at: (if .[3] == "" then null else (.[3] | tonumber) end),
+              resets_in_seconds: (if .[3] == "" then null else ((.[3] | tonumber) - $now) end) } ]' 2>/dev/null \
+        || printf '[]'
+}
+
+# Codex windows as one human line for `monclaude usage` (nothing when none).
+codex_usage_line() {
+    local line="" c_name c_win c_pct c_reset r
+    while IFS=$'\t' read -r c_name c_win c_pct c_reset; do
+        [ -z "$c_name" ] && continue
+        [ -n "$line" ] && line+=" · "
+        line+="${c_name} ${c_win} ${c_pct}%"
+        r=$(fmt_reset "$c_reset")
+        [ -n "$r" ] && line+=" (resets $r)"
+    done <<< "$(codex_limits_tsv)"
+    [ -n "$line" ] && printf '%s\n' "$line"
+    return 0
+}
+
 # Emit current usage as JSON (mode=json) or one human line (mode=plain).
 cmd_usage() {
     local mode="${1:-plain}"
@@ -318,9 +406,10 @@ cmd_usage() {
     [ -f "$cache_file" ] && cached=$(cat "$cache_file" 2>/dev/null)
     if [ -z "$cached" ] || ! echo "$cached" | jq -e '.five_hour' >/dev/null 2>&1; then
         if [ "$mode" = json ]; then
-            jq -n '{five_hour:null,seven_day:null,weekly_scoped:[],extra_usage:{enabled:false,used_usd:null,limit_usd:null},data_age_seconds:null,stale:true,error:true}'
+            jq -n --argjson cx "$(codex_limits_json "$(date +%s)")" '{five_hour:null,seven_day:null,weekly_scoped:[],codex:$cx,extra_usage:{enabled:false,used_usd:null,limit_usd:null},data_age_seconds:null,stale:true,error:true}'
         else
             printf 'usage api down (upstream)\n'
+            codex_usage_line
         fi
         return 1
     fi
@@ -371,6 +460,8 @@ cmd_usage() {
               severity: .severity,
               is_active: (.is_active // false) } ]' 2>/dev/null)
     [ -z "$scoped_json" ] && scoped_json="[]"
+    local codex_json
+    codex_json=$(codex_limits_json "$now")
 
     if [ "$mode" = json ]; then
         jq -n \
@@ -378,13 +469,14 @@ cmd_usage() {
             --arg     fr "$five_iso"  --argjson fs "${five_secs:-null}" \
             --argjson wu "$week_util" --argjson wh "$(( 100 - week_util ))" \
             --arg     wr "$week_iso"  --argjson ws "${week_secs:-null}" \
-            --argjson sc "$scoped_json" \
+            --argjson sc "$scoped_json" --argjson cx "$codex_json" \
             --argjson ee "$extra_enabled" --argjson eu "$extra_used" --argjson el "$extra_limit" \
             --argjson da "${data_age:-null}" --argjson st "$stale" \
             '{
                five_hour:   {utilization: $fu, headroom: $fh, resets_at: (if $fr=="" then null else $fr end), resets_in_seconds: $fs},
                seven_day:   {utilization: $wu, headroom: $wh, resets_at: (if $wr=="" then null else $wr end), resets_in_seconds: $ws},
                weekly_scoped: $sc,
+               codex: $cx,
                extra_usage: {enabled: $ee, used_usd: $eu, limit_usd: $el},
                data_age_seconds: $da,
                stale: $st,
@@ -405,6 +497,7 @@ cmd_usage() {
             [ -n "$sr" ] && line="$line (resets $sr)"
         done <<< "$(echo "$cached" | scoped_limits_tsv)"
         printf '%s\n' "$line"
+        codex_usage_line
     fi
     return 0
 }
@@ -419,11 +512,17 @@ if [ "$cmd_is_usage" = true ]; then
     exit $?
 fi
 
-# ── Effort level (from settings, not in status JSON) ──
-effort=""
-settings_file="${HOME}/.claude/settings.json"
-if [ -f "$settings_file" ]; then
-    effort=$(jq -r '.effortLevel // empty' "$settings_file" 2>/dev/null)
+# ── Effort level ──
+# Claude Code sends the session's live effort as .effort.level (it follows
+# /effort and model switches, and is absent for models without effort).
+# Older versions send neither .effort nor .thinking, so only then fall back
+# to the saved settings default (which misses session-only /effort changes).
+effort=$(echo "$input" | jq -r '.effort.level // empty' 2>/dev/null)
+if [ -z "$effort" ] && ! echo "$input" | jq -e 'has("effort") or has("thinking")' >/dev/null 2>&1; then
+    settings_file="${HOME}/.claude/settings.json"
+    if [ -f "$settings_file" ]; then
+        effort=$(jq -r '.effortLevel // empty' "$settings_file" 2>/dev/null)
+    fi
 fi
 # Distinct cool→warm ramp, one hue per level (not the usage palette — effort
 # is depth-of-thought, not a danger scale). Var names denote tiers, not hues:
@@ -503,6 +602,9 @@ fi
 # Per-model scoped weekly caps (e.g. Fable) — TSV lines, empty if none.
 scoped_limits=""
 [ -n "$usage" ] && scoped_limits=$(echo "$usage" | scoped_limits_tsv)
+
+# Codex windows — TSV lines, empty if Codex isn't used on this machine.
+codex_limits=$(codex_limits_tsv)
 
 # ── "Unused weekly quota" nudge ───────────────────────
 # When the 7-day window resets within 2 days and you've used less than half
@@ -593,6 +695,15 @@ if [ "$cols" -lt 80 ]; then
     elif $usage_error; then
         line+=" ${dim}·${reset} ${yellow}usage api down${reset} ${dim}(upstream)${reset}"
     fi
+    if [ -n "$codex_limits" ]; then
+        while IFS=$'\t' read -r c_name c_win c_pct c_reset; do
+            [ -z "$c_name" ] && continue
+            c_c=$(pct_color "$c_pct")
+            line+=" ${dim}· ${c_name} ${c_win} ${reset}${c_c}${c_pct}%${reset}"
+            c_reset=$(fmt_reset "$c_reset")
+            [ -n "$c_reset" ] && line+=" ${dim}${c_reset}${reset}"
+        done <<< "$codex_limits"
+    fi
 
     printf "%b" "$line"
     exit 0
@@ -640,6 +751,15 @@ if [ -n "$usage" ]; then
     fi
 elif $usage_error; then
     line2="${dim}usage api down upstream (HTTP 429, anthropics/claude-code#30930) — auto-retry${reset}"
+fi
+if [ -n "$codex_limits" ]; then
+    while IFS=$'\t' read -r c_name c_win c_pct c_reset; do
+        [ -z "$c_name" ] && continue
+        [ -n "$line2" ] && line2+=" ${dim}|${reset} "
+        line2+="${white}${c_name} ${c_win}${reset} $(build_bar "$c_pct" 12)"
+        c_reset=$(fmt_reset "$c_reset")
+        [ -n "$c_reset" ] && line2+=" ${dim}${c_reset}${reset}"
+    done <<< "$codex_limits"
 fi
 
 printf "%b" "$line1"

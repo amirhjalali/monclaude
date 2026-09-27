@@ -4,6 +4,17 @@ All notable changes to `monclaude` will be documented here.
 
 ## Unreleased
 
+- Added Codex (OpenAI) rate limits next to Claude's: a `Codex 7d` gauge on
+  line 2 (and in compact mode), a line in `monclaude usage`, and a `codex`
+  array in `monclaude usage --json`. Read from the newest `rate_limits`
+  snapshot in `~/.codex/sessions` (honours `CODEX_HOME`), cached for 60s,
+  and reset to 0% once a window's reset time passes. Extra Codex limits
+  (e.g. Spark) show only when used. `MONCLAUDE_NO_CODEX=1` turns it off.
+- Fixed the effort indicator drifting from the session: it now reads the live
+  `effort.level` Claude Code sends in the status JSON (follows `/effort` and
+  model switches) instead of the saved `effortLevel` default in
+  `~/.claude/settings.json`, which is only used as a fallback on older
+  Claude Code versions.
 - Added the session's folder and git branch to the start of line 1 in full
   mode (100+ columns), e.g. `monclaude ⎇ main | Opus 4.8 …`. Long branch
   names are clipped; `MONCLAUDE_NO_LOCATION=1` turns it off.

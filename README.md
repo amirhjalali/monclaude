@@ -31,7 +31,7 @@ and warm up (gold → amber → red) as you approach a limit.
 - Folder and git branch of the session, so a dozen open sessions are easy to
   tell apart (shown at 100+ columns; `MONCLAUDE_NO_LOCATION=1` hides it)
 - Model name and context size
-- Reasoning effort level — `low` / `med` / `high` / `xhigh` / `max`, color-coded (shown when set in Claude settings)
+- Reasoning effort level — `low` / `med` / `high` / `xhigh` / `max`, color-coded (live from the session, so `/effort` changes show immediately)
 - Context window usage bar with the percentage inside it
 - Tokens used vs total
 - Running session cost
@@ -41,6 +41,9 @@ and warm up (gold → amber → red) as you approach a limit.
 - 7-day rolling usage with time until reset
 - Per-model weekly caps when your plan has them (e.g. a separate Fable
   limit that burns faster than the overall weekly window)
+- Codex (OpenAI) limits alongside Claude's when you also use the Codex CLI —
+  read from Codex's local session logs, so no extra login or API calls.
+  Values are as of Codex's last turn; `MONCLAUDE_NO_CODEX=1` hides them
 - 5-hour contribution to the 7-day window
 - "Use it" nudge when the weekly window resets soon and you still have a lot
   unused (e.g. `· 69% left before reset`)
@@ -136,6 +139,9 @@ monclaude usage --json   # machine-readable, below
 - `weekly_scoped` → per-model weekly caps (e.g. Fable) when your plan has
   them; `[]` otherwise. `is_active: true` marks the limit currently binding
   you — a loop should guard on this one, not just the overall `seven_day`.
+- `codex` → Codex windows (e.g. `{ "limit": "Codex", "window": "7d",
+  "utilization": 17, … }`) read from `~/.codex/sessions`; `[]` when Codex
+  isn't used on this machine. `resets_at` is Unix epoch seconds.
 - `error: true` (and exit code `1`) → no usable numbers; treat usage as unknown.
 - `stale: true` → numbers are older than the refresh window (upstream may be
   lagging); prefer to wait rather than trust them.
