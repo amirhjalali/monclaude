@@ -258,7 +258,9 @@ cache_dir="${MONCLAUDE_CACHE_DIR:-/tmp/claude}"
 cache_file="$cache_dir/statusline-usage-cache.json"
 lock_dir="$cache_dir/statusline-refresh.lock"
 cache_ttl=180
+live_ttl=600
 codex_ttl=60
+live_file="$cache_dir/statusline-live-limits.json"
 error_ttl=1800
 lock_stale_secs=5
 mkdir -p "$cache_dir"
@@ -371,6 +373,46 @@ ensure_usage_cache() {
     trap - EXIT HUP INT TERM
 }
 
+# Live 5h/7d limits, in the usage-API shape. Claude Code reads them from the
+# rate-limit headers of every reply and passes them to the status line as
+# .rate_limits, so they are current and immune to the /api/oauth/usage 429s.
+# Reads status JSON on stdin; prints nothing when the field is absent (older
+# Claude Code, API-key users, or before the session's first reply).
+live_limits_from_input() {
+    jq -c --argjson now "$(date +%s)" '
+        def win: if . == null then null else
+            { utilization: (.used_percentage // 0),
+              resets_at: (.resets_at | if type == "number" then (floor | todate) else . end) } end;
+        (.rate_limits // {})
+        | select(.five_hour != null or .seven_day != null)
+        | { five_hour: (.five_hour | win), seven_day: (.seven_day | win),
+            fetched_at: $now, source: "session" }' 2>/dev/null
+}
+
+# Overlay live 5h/7d (arg 2) on the API response (arg 1), keeping the API's
+# extras (per-model limits, extra credits). Either may be empty. When both
+# exist, the live windows win only if they are the newer observation.
+merge_usage() {
+    local api="$1" live="$2"
+    if [ -z "$live" ]; then printf '%s' "$api"; return; fi
+    if [ -z "$api" ]; then printf '%s' "$live"; return; fi
+    jq -cn --argjson a "$api" --argjson l "$live" '
+        if ($l.fetched_at // 0) >= ($a.fetched_at // 0)
+        then $a + { five_hour: ($l.five_hour // $a.five_hour),
+                    seven_day: ($l.seven_day // $a.seven_day),
+                    fetched_at: $l.fetched_at }
+        else $a end' 2>/dev/null || printf '%s' "$api"
+}
+
+# Last live snapshot written by a status-line render, if still recent.
+recent_live_limits() {
+    [ -f "$live_file" ] || return
+    local snap age
+    snap=$(cat "$live_file" 2>/dev/null)
+    age=$(( $(date +%s) - $(echo "$snap" | jq -r '.fetched_at // 0' 2>/dev/null || echo 0) ))
+    [ "$age" -le "$live_ttl" ] && printf '%s' "$snap"
+}
+
 # Codex windows as a JSON array for `usage --json` ([] when none).
 codex_limits_json() {
     local now="$1"
@@ -400,11 +442,18 @@ codex_usage_line() {
 # Emit current usage as JSON (mode=json) or one human line (mode=plain).
 cmd_usage() {
     local mode="${1:-plain}"
+    # A recent live snapshot covers 5h/7d, so the API is only needed for the
+    # extras and can be polled far less often.
+    local live
+    live=$(recent_live_limits)
+    [ -n "$live" ] && cache_ttl=$live_ttl
     ensure_usage_cache
 
     local cached=""
     [ -f "$cache_file" ] && cached=$(cat "$cache_file" 2>/dev/null)
-    if [ -z "$cached" ] || ! echo "$cached" | jq -e '.five_hour' >/dev/null 2>&1; then
+    echo "$cached" | jq -e '.five_hour' >/dev/null 2>&1 || cached=""
+    cached=$(merge_usage "$cached" "$live")
+    if [ -z "$cached" ] || ! echo "$cached" | jq -e '.five_hour // .seven_day' >/dev/null 2>&1; then
         if [ "$mode" = json ]; then
             jq -n --argjson cx "$(codex_limits_json "$(date +%s)")" '{five_hour:null,seven_day:null,weekly_scoped:[],codex:$cx,extra_usage:{enabled:false,used_usd:null,limit_usd:null},data_age_seconds:null,stale:true,error:true}'
         else
@@ -562,7 +611,17 @@ pct_used=$(( current * 100 / size ))
 cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 cost_fmt=$(awk "BEGIN {printf \"$%.2f\", $cost}")
 
-# ── Usage API (cached) ────────────────────────────────
+# ── Usage: live from Claude Code, API for the extras ──
+# Snapshot the live limits for `monclaude usage`, and relax API polling
+# while they are flowing (the API then only supplies Fable/extra credits).
+live_limits=$(echo "$input" | live_limits_from_input)
+if [ -n "$live_limits" ]; then
+    cache_ttl=$live_ttl
+    tmp_l="$live_file.tmp.$$"
+    if printf '%s\n' "$live_limits" > "$tmp_l" 2>/dev/null; then
+        mv "$tmp_l" "$live_file" 2>/dev/null || rm -f "$tmp_l"
+    fi
+fi
 ensure_usage_cache
 
 # Read last-good cached response (only accept real usage payloads).
@@ -578,6 +637,11 @@ if [ -f "$cache_file" ]; then
     else
         usage_error=true
     fi
+fi
+# Live 5h/7d override the API's; with them, an API outage only hides extras.
+if [ -n "$live_limits" ]; then
+    usage=$(merge_usage "$usage" "$live_limits")
+    usage_error=false
 fi
 
 # ── Parse usage data ──────────────────────────────────

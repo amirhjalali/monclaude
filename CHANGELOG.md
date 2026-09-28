@@ -4,6 +4,13 @@ All notable changes to `monclaude` will be documented here.
 
 ## Unreleased
 
+- 5-hour and 7-day gauges now come from the live `rate_limits` Claude Code
+  puts in the status JSON (read from the rate-limit headers of every reply)
+  instead of polling `/api/oauth/usage`. They stay current and no longer
+  vanish into `usage api down` during the endpoint's 429 loops. The API is
+  now only needed for per-model caps and extra credits, and is polled every
+  10 minutes while live data flows. `monclaude usage` uses the last live
+  snapshot (`statusline-live-limits.json`) when it is under 10 minutes old.
 - Added Codex (OpenAI) rate limits next to Claude's: a `Codex 7d` gauge on
   line 2 (and in compact mode), a line in `monclaude usage`, and a `codex`
   array in `monclaude usage --json`. Read from the newest `rate_limits`

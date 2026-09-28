@@ -105,9 +105,9 @@ chmod +x ~/.claude/monclaude.sh
 
 ## How it works
 
-1. Claude Code pipes session JSON (model, context, cost) into the status line script via stdin
-2. The script calls the Anthropic usage API to fetch 5-hour and 7-day rate limit data
-3. API responses are cached for 180 seconds at `/tmp/claude/statusline-usage-cache.json` (stretched to 30 min when the upstream endpoint is stuck in its known 429 loop — see anthropics/claude-code#30930) and a `mkdir` mutex serializes refreshes across concurrent sessions
+1. Claude Code pipes session JSON (model, context, cost, effort, and live 5-hour/7-day rate limits) into the status line script via stdin
+2. The 5-hour and 7-day gauges come straight from that JSON — Claude Code reads them from the rate-limit headers of every reply, so they are live and never hit the flaky usage API. A snapshot is kept at `/tmp/claude/statusline-live-limits.json` for `monclaude usage`
+3. The Anthropic usage API is still polled for the extras it alone knows (per-model caps like Fable, extra credits). While live limits are flowing it is polled every 10 minutes; otherwise (older Claude Code, before the first reply) it is the source for 5h/7d too and is cached for 180 seconds at `/tmp/claude/statusline-usage-cache.json` (stretched to 30 min when the upstream endpoint is stuck in its known 429 loop — see anthropics/claude-code#30930) and a `mkdir` mutex serializes refreshes across concurrent sessions
 4. Narrow terminals automatically switch to compact one-line mode
 
 ## For agents & autonomous loops
@@ -187,7 +187,7 @@ Or let GitHub Actions run the included ShellCheck workflow on every push and pul
 Claude Code did not pass status JSON yet, or the command is not configured in `~/.claude/settings.json`.
 
 **Shows `usage api down`**  
-The upstream usage endpoint is returning invalid data or rate limiting. `monclaude` preserves the last valid cache and backs off automatically.
+The upstream usage endpoint is returning invalid data or rate limiting, and Claude Code hasn't sent live limits yet (they arrive with the session's first reply, on recent Claude Code versions). `monclaude` preserves the last valid cache and backs off automatically. With live limits flowing, an API outage only hides the per-model and extra-credit gauges.
 
 **Usage data missing on Linux**  
 Make sure `~/.claude/.credentials.json` exists and contains Claude Code OAuth credentials.
