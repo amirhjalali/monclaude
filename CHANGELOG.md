@@ -2,7 +2,7 @@
 
 All notable changes to `monclaude` will be documented here.
 
-## Unreleased
+## 0.2.0 — 2026-11-03
 
 - Fixed usage numbers freezing when `/api/oauth/usage` returns
   `five_hour: null`. Responses were judged valid by a non-null `five_hour`,
