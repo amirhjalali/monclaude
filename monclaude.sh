@@ -205,8 +205,13 @@ codex_limits_tsv() {
         fi
     fi
     local files f tmp="$out.tmp.$$"
-    # Rollout paths sort chronologically by name; newest 5 are enough.
-    files=$(find "$sessions" -name 'rollout-*.jsonl' -mtime -14 2>/dev/null | sort | tail -5)
+    # Newest 5 by mtime are enough. Not by name: names carry the session's
+    # start time, and a long-running or resumed session keeps writing to its
+    # old rollout, which would drop out of a by-name pick and go stale.
+    files=$(find "$sessions" -name 'rollout-*.jsonl' -mtime -14 2>/dev/null)
+    [ -n "$files" ] || return
+    # shellcheck disable=SC2086
+    files=$(ls -t $files 2>/dev/null | head -5)
     {
         for f in $files; do
             grep -h '"rate_limits"' "$f" 2>/dev/null | tail -20
@@ -263,6 +268,23 @@ codex_ttl=60
 live_file="$cache_dir/statusline-live-limits.json"
 error_ttl=1800
 lock_stale_secs=5
+
+# True when stdin is a usage payload. Not `jq -e .five_hour`: the API sends
+# five_hour: null when no 5h window is active, and that check took every such
+# 200 for an error, freezing the cache on its last pre-null response.
+is_usage_json() {
+    jq -e 'type == "object" and (has("five_hour") or has("seven_day"))' >/dev/null 2>&1
+}
+
+# True when the usage payload on stdin says the account has a 5h limit.
+# Accounts without one (e.g. verified Ultra) get five_hour: null and no
+# "session" entry in the limits array. A null five_hour alone is not proof:
+# capped accounts can see it between windows, and responses without a
+# limits array (live-only data, older API shape) count as capped.
+has_five_hour_limit() {
+    jq -e '.five_hour != null or (has("limits") | not)
+           or any(.limits[]?; .kind == "session")' >/dev/null 2>&1
+}
 mkdir -p "$cache_dir"
 
 # ── Subcommands (agent-facing) ─────────────────────────
@@ -280,6 +302,7 @@ Subcommands (for humans and agents):
 
 usage --json fields:
   five_hour / seven_day : { utilization, headroom, resets_at, resets_in_seconds }
+                          five_hour is null when the account has no 5h limit
   weekly_scoped         : [ { scope, utilization, headroom, resets_at,
                               resets_in_seconds, severity, is_active } ]
                           per-model weekly caps (e.g. Fable) — [] if none
@@ -306,7 +329,7 @@ ensure_usage_cache() {
     if [ -f "$cache_file" ]; then
         local probe
         probe=$(cat "$cache_file" 2>/dev/null)
-        if [ -z "$probe" ] || ! echo "$probe" | jq -e '.five_hour' >/dev/null 2>&1; then
+        if [ -z "$probe" ] || ! echo "$probe" | is_usage_json; then
             effective_ttl=$error_ttl
         fi
     fi
@@ -355,7 +378,7 @@ ensure_usage_cache() {
             -H "Authorization: Bearer $token" \
             -H "anthropic-beta: oauth-2025-04-20" \
             "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-        if [ -n "$resp" ] && echo "$resp" | jq -e '.five_hour' >/dev/null 2>&1; then
+        if [ -n "$resp" ] && echo "$resp" | is_usage_json; then
             # Stamp fetched_at so `usage` can report true data age even after an
             # error-state touch bumps the file mtime.
             local tmp_file="${cache_file}.tmp.$$"
@@ -451,7 +474,7 @@ cmd_usage() {
 
     local cached=""
     [ -f "$cache_file" ] && cached=$(cat "$cache_file" 2>/dev/null)
-    echo "$cached" | jq -e '.five_hour' >/dev/null 2>&1 || cached=""
+    echo "$cached" | is_usage_json || cached=""
     cached=$(merge_usage "$cached" "$live")
     if [ -z "$cached" ] || ! echo "$cached" | jq -e '.five_hour // .seven_day' >/dev/null 2>&1; then
         if [ "$mode" = json ]; then
@@ -466,6 +489,9 @@ cmd_usage() {
     local now five_util week_util five_iso week_iso fetched_at
     now=$(date +%s)
     five_util=$(echo "$cached" | jq -r '.five_hour.utilization // 0' | awk '{printf "%.0f", $1}')
+    # Hide 5h only for accounts that have no 5h limit at all.
+    local five_known=true
+    echo "$cached" | has_five_hour_limit || five_known=false
     week_util=$(echo "$cached" | jq -r '.seven_day.utilization // 0' | awk '{printf "%.0f", $1}')
     five_iso=$(echo "$cached" | jq -r '.five_hour.resets_at // empty')
     week_iso=$(echo "$cached" | jq -r '.seven_day.resets_at // empty')
@@ -514,6 +540,7 @@ cmd_usage() {
 
     if [ "$mode" = json ]; then
         jq -n \
+            --argjson fk "$five_known" \
             --argjson fu "$five_util" --argjson fh "$(( 100 - five_util ))" \
             --arg     fr "$five_iso"  --argjson fs "${five_secs:-null}" \
             --argjson wu "$week_util" --argjson wh "$(( 100 - week_util ))" \
@@ -522,7 +549,7 @@ cmd_usage() {
             --argjson ee "$extra_enabled" --argjson eu "$extra_used" --argjson el "$extra_limit" \
             --argjson da "${data_age:-null}" --argjson st "$stale" \
             '{
-               five_hour:   {utilization: $fu, headroom: $fh, resets_at: (if $fr=="" then null else $fr end), resets_in_seconds: $fs},
+               five_hour:   (if $fk then {utilization: $fu, headroom: $fh, resets_at: (if $fr=="" then null else $fr end), resets_in_seconds: $fs} else null end),
                seven_day:   {utilization: $wu, headroom: $wh, resets_at: (if $wr=="" then null else $wr end), resets_in_seconds: $ws},
                weekly_scoped: $sc,
                codex: $cx,
@@ -532,11 +559,15 @@ cmd_usage() {
                error: false
              }'
     else
-        local line="5h ${five_util}%" fr wr
+        local line="" fr wr
         fr=$(fmt_reset "$five_iso")
         wr=$(fmt_reset "$week_iso")
-        [ -n "$fr" ] && line="$line (resets $fr)"
-        line="$line · 7d ${week_util}%"
+        if $five_known; then
+            line="5h ${five_util}%"
+            [ -n "$fr" ] && line="$line (resets $fr)"
+            line="$line · "
+        fi
+        line="${line}7d ${week_util}%"
         [ -n "$wr" ] && line="$line (resets $wr)"
         local s_name s_pct s_iso sr
         while IFS=$'\t' read -r s_name s_pct s_iso _; do
@@ -632,7 +663,7 @@ usage=""
 usage_error=false
 if [ -f "$cache_file" ]; then
     cached=$(cat "$cache_file" 2>/dev/null)
-    if [ -n "$cached" ] && echo "$cached" | jq -e '.five_hour' >/dev/null 2>&1; then
+    if [ -n "$cached" ] && echo "$cached" | is_usage_json; then
         usage="$cached"
     else
         usage_error=true
@@ -645,12 +676,13 @@ if [ -n "$live_limits" ]; then
 fi
 
 # ── Parse usage data ──────────────────────────────────
-five_pct=0; week_pct=0; five_reset=""; week_reset=""
+five_pct=0; week_pct=0; five_reset=""; week_reset=""; five_known=false
 extra_enabled=false; extra_used=""; extra_limit=""
 if [ -n "$usage" ] && echo "$usage" | jq -e . >/dev/null 2>&1; then
     five_pct=$(echo "$usage" | jq -r '.five_hour.utilization // 0' | awk '{printf "%.0f", $1}')
     five_reset_iso=$(echo "$usage" | jq -r '.five_hour.resets_at // empty')
     five_reset=$(fmt_reset "$five_reset_iso")
+    echo "$usage" | has_five_hour_limit && five_known=true
 
     week_pct=$(echo "$usage" | jq -r '.seven_day.utilization // 0' | awk '{printf "%.0f", $1}')
     week_reset_iso=$(echo "$usage" | jq -r '.seven_day.resets_at // empty')
@@ -738,8 +770,11 @@ if [ "$cols" -lt 80 ]; then
     line+=" ${pct_c}${pct_used}%${reset} ${dim}~${cost_fmt}${reset}"
 
     if [ -n "$usage" ]; then
-        line+=" ${dim}·${reset} ${dim}5h ${reset}${five_c}${five_pct}%${reset}"
-        [ -n "$five_reset" ] && line+=" ${dim}${five_reset}${reset}"
+        # Account has no 5h limit (e.g. verified Ultra): hide the gauge.
+        if $five_known; then
+            line+=" ${dim}·${reset} ${dim}5h ${reset}${five_c}${five_pct}%${reset}"
+            [ -n "$five_reset" ] && line+=" ${dim}${five_reset}${reset}"
+        fi
         line+=" ${dim}· 7d ${reset}${week_c}${week_pct}%${reset}"
         [ -n "$week_delta" ] && line+=" ${dim}+${week_delta}pp${reset}"
         [ -n "$week_reset" ] && line+=" ${dim}${week_reset}${reset}"
@@ -794,9 +829,12 @@ line1+=" ${dim}|${reset} ${dim}~${cost_fmt}${reset}"
 # LINE 2: 5hr | weekly | extra  (or rate-limit indicator)
 line2=""
 if [ -n "$usage" ]; then
-    line2="${white}5h${reset} $(build_bar "$five_pct" 12)"
-    [ -n "$five_reset" ] && line2+=" ${dim}${five_reset}${reset}"
-    line2+=" ${dim}|${reset} "
+    # Account has no 5h limit (e.g. verified Ultra): hide the gauge.
+    if $five_known; then
+        line2="${white}5h${reset} $(build_bar "$five_pct" 12)"
+        [ -n "$five_reset" ] && line2+=" ${dim}${five_reset}${reset}"
+        line2+=" ${dim}|${reset} "
+    fi
     line2+="${white}7d${reset} $(build_bar "$week_pct" 12)"
     [ -n "$week_delta" ] && line2+=" ${dim}+${week_delta}pp 5h${reset}"
     [ -n "$week_reset" ] && line2+=" ${dim}${week_reset}${reset}"

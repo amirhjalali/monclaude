@@ -106,7 +106,7 @@ chmod +x ~/.claude/monclaude.sh
 ## How it works
 
 1. Claude Code pipes session JSON (model, context, cost, effort, and live 5-hour/7-day rate limits) into the status line script via stdin
-2. The 5-hour and 7-day gauges come straight from that JSON — Claude Code reads them from the rate-limit headers of every reply, so they are live and never hit the flaky usage API. A snapshot is kept at `/tmp/claude/statusline-live-limits.json` for `monclaude usage`
+2. The 5-hour and 7-day gauges come straight from that JSON (the 5h gauge is hidden on accounts with no 5-hour limit, such as verified Ultra) — Claude Code reads them from the rate-limit headers of every reply, so they are live and never hit the flaky usage API. A snapshot is kept at `/tmp/claude/statusline-live-limits.json` for `monclaude usage`
 3. The Anthropic usage API is still polled for the extras it alone knows (per-model caps like Fable, extra credits). While live limits are flowing it is polled every 10 minutes; otherwise (older Claude Code, before the first reply) it is the source for 5h/7d too and is cached for 180 seconds at `/tmp/claude/statusline-usage-cache.json` (stretched to 30 min when the upstream endpoint is stuck in its known 429 loop — see anthropics/claude-code#30930) and a `mkdir` mutex serializes refreshes across concurrent sessions
 4. Narrow terminals automatically switch to compact one-line mode
 
@@ -136,6 +136,8 @@ monclaude usage --json   # machine-readable, below
 }
 ```
 
+- `five_hour` → `null` when your account has no 5-hour limit (e.g. verified
+  Ultra); the status line then hides the 5h gauge.
 - `weekly_scoped` → per-model weekly caps (e.g. Fable) when your plan has
   them; `[]` otherwise. `is_active: true` marks the limit currently binding
   you — a loop should guard on this one, not just the overall `seven_day`.
@@ -158,7 +160,7 @@ if [ "$(echo "$u" | jq -r '.error')" = "true" ] \
    || [ "$(echo "$u" | jq -r '.stale')" = "true" ]; then
   echo "usage unknown/stale — waiting"; sleep 300; exit 0
 fi
-pct=$(echo "$u" | jq -r '.five_hour.utilization')
+pct=$(echo "$u" | jq -r '.five_hour.utilization // 0')   # null: no 5h limit
 if [ "$pct" -ge "$THRESH" ]; then
   wait=$(echo "$u" | jq -r 'if (.five_hour.resets_in_seconds // 0) > 0 then .five_hour.resets_in_seconds else 600 end')
   echo "5h usage ${pct}% ≥ ${THRESH}% — sleeping ${wait}s until reset"

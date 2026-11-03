@@ -4,6 +4,18 @@ All notable changes to `monclaude` will be documented here.
 
 ## Unreleased
 
+- Fixed usage numbers freezing when `/api/oauth/usage` returns
+  `five_hour: null`. Responses were judged valid by a non-null `five_hour`,
+  so every such 200 was taken for an error (and shown as `usage api down`),
+  leaving the cache on its last older response: per-model caps, extra
+  credits and, without live data, 7d stopped updating. Any payload with a
+  `five_hour` or `seven_day` key now counts.
+- The 5h gauge is hidden for accounts with no 5-hour limit (e.g. verified
+  Ultra), detected as `five_hour: null` with no `session` entry in the
+  `limits` array. Capped accounts keep it, between windows too. `monclaude
+  usage --json` reports `five_hour: null` for these accounts.
+- Codex gauge picks the newest rollouts by mtime, not by name, so a
+  long-running or resumed Codex session no longer goes stale.
 - 5-hour and 7-day gauges now come from the live `rate_limits` Claude Code
   puts in the status JSON (read from the rate-limit headers of every reply)
   instead of polling `/api/oauth/usage`. They stay current and no longer
