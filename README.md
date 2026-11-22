@@ -117,7 +117,10 @@ work | Op5.5 high | Personal 20% 2d5h · Fable 2% | Codex 35% 3d20h · Gemini 17
 ```
 
 Session first, then this account's limits, then the other accounts. A
-per-model cap shows its own reset time only when it differs from the week's. Set it
+per-model cap shows its own reset time only when it differs from the week's. A
+countdown turns gold when 40%+ of that limit is unused and it resets within
+72 hours, red within 24 hours, so allowance about to go to waste stands out
+(never for accounts with a `rule`). Set it
 in your status line command, e.g. `MONCLAUDE_LINES=1 ~/.claude/monclaude.sh`.
 Below 80 columns the usual compact line is used instead.
 

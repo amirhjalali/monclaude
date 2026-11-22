@@ -899,12 +899,23 @@ if [ "${MONCLAUDE_LINES:-}" = 1 ] && [ "$cols" -ge 80 ]; then
     dot=" ${dim}·${reset} "
     pc() { printf '%b' "$(pct_color "$1")$1%${reset}"; }
     # Time until reset, short: 2d5h, 5h, 40m (nothing if unknown or past).
+    # Args: reset time, percent used, rule. Coloured when allowance is about
+    # to go unused: 40%+ left and resetting within 72 h (gold) or 24 h (red).
+    # An account with a rule is never flagged: its leftover is not spare.
     rs() {
-        local d; d=$(secs_until "$1")
+        local d c="$dim" t
+        d=$(secs_until "$1")
         [ -z "$d" ] || [ "$d" -le 0 ] && return
-        if [ "$d" -ge 86400 ]; then printf '%b' " ${dim}$(( d / 86400 ))d$(( d % 86400 / 3600 ))h${reset}"
-        elif [ "$d" -ge 3600 ]; then printf '%b' " ${dim}$(( d / 3600 ))h${reset}"
-        else printf '%b' " ${dim}$(( d / 60 ))m${reset}"; fi
+        if [ "$d" -ge 86400 ]; then t="$(( d / 86400 ))d$(( d % 86400 / 3600 ))h"
+        elif [ "$d" -ge 3600 ]; then t="$(( d / 3600 ))h"
+        else t="$(( d / 60 ))m"; fi
+        case "${2:-}" in
+            ''|*[!0-9]*) ;;
+            *) if [ -z "${3:-}" ] && [ "$2" -le 60 ]; then
+                   if [ "$d" -le 86400 ]; then c="$red"; elif [ "$d" -le 259200 ]; then c="$orange"; fi
+               fi ;;
+        esac
+        printf '%b' " ${c}${t}${reset}"
     }
     line=""
     [ -n "$loc_folder" ] && [ "$cols" -ge 100 ] && line="${white}${loc_folder}${reset}${sep}"
@@ -916,7 +927,7 @@ if [ "${MONCLAUDE_LINES:-}" = 1 ] && [ "$cols" -ge 80 ]; then
     if [ -n "$usage" ]; then
         acct="${white}${me_label:-7d}${reset}"
         [ -n "$me_rule" ] && acct+=" ${yellow}${me_rule}${reset}"
-        acct+=" $(pc "$week_pct")$(rs "$week_reset_iso")"
+        acct+=" $(pc "$week_pct")$(rs "$week_reset_iso" "$week_pct")"
         $five_known && acct+=" ${dim}5h${reset} $(pc "$five_pct")$(rs "$five_reset_iso")"
         if [ -n "$scoped_limits" ]; then
             while IFS=$'\t' read -r s_name s_pct s_iso _; do
@@ -925,7 +936,7 @@ if [ "${MONCLAUDE_LINES:-}" = 1 ] && [ "$cols" -ge 80 ]; then
                 # A per-model cap usually resets with the week; only show its time if it differs.
                 s_d=$(secs_until "$s_iso"); w_d=$(secs_until "$week_reset_iso")
                 if [ -n "$s_d" ] && { [ -z "$w_d" ] || [ $(( s_d - w_d )) -gt 3600 ] || [ $(( w_d - s_d )) -gt 3600 ]; }; then
-                    acct+="$(rs "$s_iso")"
+                    acct+="$(rs "$s_iso" "$s_pct")"
                 fi
             done <<< "$scoped_limits"
         fi
@@ -940,15 +951,15 @@ if [ "${MONCLAUDE_LINES:-}" = 1 ] && [ "$cols" -ge 80 ]; then
         while IFS=$'\t' read -r c_name c_win c_pct c_iso; do
             [ -z "$c_name" ] && continue
             [ -n "$rest" ] && rest+="$dot"
-            rest+="${white}${c_name}${reset} $(pc "$c_pct")$(rs "$c_iso")"
+            rest+="${white}${c_name}${reset} $(pc "$c_pct")$(rs "$c_iso" "$c_pct")"
         done <<< "$codex_limits"
     fi
     if [ -n "$others" ]; then
-        while IFS="$us" read -r o_label _ o_pct o_iso; do
+        while IFS="$us" read -r o_label o_rule o_pct o_iso; do
             [ -z "$o_label" ] && continue
             [ -n "$rest" ] && rest+="$dot"
             if [ "$o_pct" = "?" ]; then rest+="${white}${o_label}${reset} ${dim}?${reset}"
-            else rest+="${white}${o_label}${reset} $(pc "$o_pct")$(rs "$o_iso")"; fi
+            else rest+="${white}${o_label}${reset} $(pc "$o_pct")$(rs "$o_iso" "$o_pct" "$o_rule")"; fi
         done <<< "$others"
         $pools_stale && rest+=" ${yellow}(old)${reset}"
     fi

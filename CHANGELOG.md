@@ -13,6 +13,10 @@ All notable changes to `monclaude` will be documented here.
   account's limits, then the other accounts, each as a percentage coloured
   by level with a short time until it resets (`2d5h`). No bars, context
   gauge or cost.
+- Reset countdowns in one-line mode turn gold when 40%+ of a limit is
+  unused and it resets within 72 hours, red within 24 hours: allowance
+  about to go to waste. Accounts with a `rule` in the pools file are never
+  flagged, since their leftover isn't spare.
 
 ## 0.3.0 — 2026-11-22
 
