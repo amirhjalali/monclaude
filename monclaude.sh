@@ -4,7 +4,8 @@
 #
 # Full mode (>= 80 cols):
 #   Line 1: [folder branch |] Model | context window bar | session cost
-#   Line 2: 5hr usage | weekly usage | extra credits
+#   Line 2: [account |] 5hr usage | weekly usage | extra credits
+#   Line 3: other accounts, when a pools file lists them (optional)
 # Compact mode (< 80 cols — phones, narrow terminals):
 #   Single line: Model % cost · 5h % ↻reset · 7d % ↻reset
 #
@@ -287,6 +288,89 @@ has_five_hour_limit() {
 }
 mkdir -p "$cache_dir"
 
+# ── Other accounts (optional pools file) ───────────────
+# If you have several accounts (a second Claude login, Codex, Gemini, ...),
+# whatever tracks them can write their limits to one JSON file. monclaude
+# then names the account this session is on (and its rule, e.g. "work
+# only"), and shows the other accounts on a third line. It only reads the
+# file: no extra logins, probes or API calls. Format: README "Other accounts".
+# MONCLAUDE_POOLS sets the path; MONCLAUDE_NO_POOLS=1 turns it off.
+pools_file="${MONCLAUDE_POOLS:-$HOME/.config/monclaude/pools.json}"
+pools_stale_secs=10800
+us=$'\x1f'
+
+# First 8 hex of sha256(email) of the Claude account this session uses,
+# from Claude Code's own config. Cached until that file changes (a /login
+# to another account rewrites it), since ~/.claude.json can be large.
+session_account_id() {
+    local cfg="${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+    [ -f "$cfg" ] || return
+    local out email id
+    out="$cache_dir/account-id-$(printf '%s' "$cfg" | cksum | cut -d' ' -f1)"
+    if [ -s "$out" ] && [ "$out" -nt "$cfg" ]; then cat "$out"; return; fi
+    email=$(jq -r '.oauthAccount.emailAddress // empty' "$cfg" 2>/dev/null)
+    [ -z "$email" ] && return
+    if command -v shasum >/dev/null 2>&1; then
+        id=$(printf '%s' "$email" | shasum -a 256 | cut -c1-8)
+    else
+        id=$(printf '%s' "$email" | sha256sum | cut -c1-8)
+    fi
+    printf '%s' "$id" > "$out.tmp.$$" 2>/dev/null && mv "$out.tmp.$$" "$out" 2>/dev/null
+    printf '%s' "$id"
+}
+
+# One line per account in the pools file, headline (first) window only:
+# me|other, label, kind, rule, percent ("?" if unknown), resets_at, as_of,
+# separated by $us (ASCII unit separator: unlike tabs, `read` does not merge
+# empty fields). Backslashes and control characters are dropped, since the
+# text is printed with %b.
+# Arg 1: this session's account id ("" if unknown: every account is "other").
+pools_tsv() {
+    [ -n "${MONCLAUDE_NO_POOLS:-}" ] && return
+    [ -f "$pools_file" ] || return
+    jq -r --arg me "$1" '
+        (.as_of // "") as $top
+        | (.pools // [])[]
+        | select((.windows // []) | length > 0)
+        | .windows[0] as $w
+        | [ (if $me != "" and .id == $me then "me" else "other" end),
+            (.label // .id // "?"), (.kind // ""), (.rule // ""),
+            (if ($w.used_pct | type) == "number" then ($w.used_pct | round | tostring) else "?" end),
+            ($w.resets_at // ""), (.as_of // $top) ]
+        | map(tostring | gsub("[\\\\[:cntrl:]]"; "")) | join("\u001f")' "$pools_file" 2>/dev/null
+}
+
+# Seconds since the pools file's as_of (empty if unknown).
+pools_age_secs() {
+    local at age
+    at=$(jq -r '.as_of // empty' "$pools_file" 2>/dev/null)
+    [ -z "$at" ] && return
+    age=$(secs_until "$at")
+    [ -n "$age" ] && printf '%d' "$(( -age ))"
+}
+
+# Bar for a pools reading; "?" (unknown) prints as a plain "?".
+pool_bar() {
+    case "$1" in
+        ''|*[!0-9]*) printf '%b' "${dim}[ ? ]${reset}" ;;
+        *) build_bar "$1" "$2" ;;
+    esac
+}
+
+# "as of 17:22" for the pools file, flagged when older than 3 hours.
+pools_age_label() {
+    local age hhmm epoch
+    age=$(pools_age_secs)
+    [ -z "$age" ] && return
+    epoch=$(( $(date +%s) - age ))
+    if $is_mac; then hhmm=$(date -r "$epoch" +%H:%M); else hhmm=$(date -d "@$epoch" +%H:%M); fi
+    if [ "$age" -gt "$pools_stale_secs" ]; then
+        printf '%b' "${yellow}as of ${hhmm} ($(( age / 3600 ))h old)${reset}"
+    else
+        printf '%b' "${dim}as of ${hhmm}${reset}"
+    fi
+}
+
 # ── Subcommands (agent-facing) ─────────────────────────
 cmd_help() {
     cat <<'EOF'
@@ -310,12 +394,20 @@ usage --json fields:
                               (epoch), resets_in_seconds } ] — from local
                           Codex session logs; [] if Codex isn't used here
   extra_usage           : { enabled, used_usd, limit_usd }
+  account               : { id, label, rule } — this session's account, from
+                          the pools file (null without one)
+  others                : [ { label, kind, rule, utilization, resets_at } ]
+                          the pools file's other accounts ([] without one)
   data_age_seconds, stale, error
 Exit status: 0 = usable numbers (act when stale=false); 1 = no data (error=true).
 
 The five_hour/seven_day numbers describe the Claude account tied to your local
 OAuth token. The codex array is read from ~/.codex (as of Codex's last turn);
 set MONCLAUDE_NO_CODEX=1 to hide it.
+
+account / others come from an optional pools file
+(~/.config/monclaude/pools.json, or $MONCLAUDE_POOLS) that lists all your
+accounts; both are null / [] without one. See README "Other accounts".
 
 https://github.com/amirhjalali/monclaude
 EOF
@@ -538,6 +630,21 @@ cmd_usage() {
     local codex_json
     codex_json=$(codex_limits_json "$now")
 
+    # This session's account and the other accounts, from the pools file.
+    local my_id pools acct_json others_json
+    my_id=$(session_account_id)
+    pools=$(pools_tsv "$my_id")
+    acct_json=$(printf '%s\n' "$pools" | jq -Rsc --arg id "$my_id" '
+        [ split("\n")[] | select(startswith("me\u001f")) | split("\u001f") ] | first
+        | if . == null then null else {id: $id, label: .[1], rule: (if .[3] == "" then null else .[3] end)} end' 2>/dev/null)
+    [ -z "$acct_json" ] && acct_json=null
+    others_json=$(printf '%s\n' "$pools" | jq -Rsc '
+        [ split("\n")[] | select(startswith("other\u001f")) | split("\u001f")
+          | {label: .[1], kind: .[2], rule: (if .[3] == "" then null else .[3] end),
+             utilization: (.[4] | tonumber? // null), resets_at: (if .[5] == "" then null else .[5] end),
+             as_of: (if .[6] == "" then null else .[6] end)} ]' 2>/dev/null)
+    [ -z "$others_json" ] && others_json="[]"
+
     if [ "$mode" = json ]; then
         jq -n \
             --argjson fk "$five_known" \
@@ -548,12 +655,15 @@ cmd_usage() {
             --argjson sc "$scoped_json" --argjson cx "$codex_json" \
             --argjson ee "$extra_enabled" --argjson eu "$extra_used" --argjson el "$extra_limit" \
             --argjson da "${data_age:-null}" --argjson st "$stale" \
+            --argjson acct "$acct_json" --argjson oth "$others_json" \
             '{
                five_hour:   (if $fk then {utilization: $fu, headroom: $fh, resets_at: (if $fr=="" then null else $fr end), resets_in_seconds: $fs} else null end),
                seven_day:   {utilization: $wu, headroom: $wh, resets_at: (if $wr=="" then null else $wr end), resets_in_seconds: $ws},
                weekly_scoped: $sc,
                codex: $cx,
                extra_usage: {enabled: $ee, used_usd: $eu, limit_usd: $el},
+               account: $acct,
+               others: $oth,
                data_age_seconds: $da,
                stale: $st,
                error: false
@@ -576,8 +686,26 @@ cmd_usage() {
             sr=$(fmt_reset "$s_iso")
             [ -n "$sr" ] && line="$line (resets $sr)"
         done <<< "$(echo "$cached" | scoped_limits_tsv)"
+        local p_who p_label p_kind p_rule p_pct p_iso me="" oth="" pr
+        while IFS="$us" read -r p_who p_label p_kind p_rule p_pct p_iso _; do
+            [ -z "$p_who" ] && continue
+            if [ "$p_who" = me ]; then
+                me="$p_label"; [ -n "$p_rule" ] && me="$me ($p_rule)"
+            else
+                [ -n "$oth" ] && oth="$oth · "
+                oth="${oth}${p_label} ${p_pct}%"
+                [ -n "$p_rule" ] && oth="$oth ($p_rule)"
+                pr=$(fmt_reset "$p_iso"); [ -n "$pr" ] && oth="$oth resets $pr"
+            fi
+        done <<< "$pools"
+        [ -n "$me" ] && line="${me}: ${line}"
         printf '%s\n' "$line"
         codex_usage_line
+        if [ -n "$oth" ]; then
+            local oage; oage=$(pools_age_secs)
+            [ -n "$oage" ] && [ "$oage" -gt "$pools_stale_secs" ] && oth="$oth ($(( oage / 3600 ))h old)"
+            printf 'others: %s\n' "$oth"
+        fi
     fi
     return 0
 }
@@ -702,6 +830,35 @@ scoped_limits=""
 # Codex windows — TSV lines, empty if Codex isn't used on this machine.
 codex_limits=$(codex_limits_tsv)
 
+# This session's account and the other accounts (optional pools file).
+# A Codex reading under 3 h old replaces the local one: Codex's logs are
+# only as new as its last turn on this machine. MONCLAUDE_NO_CODEX=1 hides
+# Codex from both sources.
+me_label="" me_rule="" others="" pools_stale=false
+if [ -z "${MONCLAUDE_NO_POOLS:-}" ] && [ -f "$pools_file" ]; then
+    pools=$(pools_tsv "$(session_account_id)")
+    pools_age=$(pools_age_secs)
+    [ -n "$pools_age" ] && [ "$pools_age" -gt "$pools_stale_secs" ] && pools_stale=true
+    while IFS="$us" read -r p_who p_label p_kind p_rule p_pct p_iso p_at; do
+        [ -z "$p_who" ] && continue
+        if [ "$p_who" = me ]; then
+            me_label="$p_label"; me_rule="$p_rule"; continue
+        fi
+        if [ "$p_kind" = codex ]; then
+            [ -n "${MONCLAUDE_NO_CODEX:-}" ] && continue
+            if [ -n "$codex_limits" ]; then
+                p_age=$(secs_until "$p_at")
+                if [ -n "$p_age" ] && [ $(( -p_age )) -le "$pools_stale_secs" ]; then
+                    codex_limits=""
+                else
+                    continue
+                fi
+            fi
+        fi
+        others+="${p_label}${us}${p_rule}${us}${p_pct}${us}${p_iso}"$'\n'
+    done <<< "$pools"
+fi
+
 # ── "Unused weekly quota" nudge ───────────────────────
 # When the 7-day window resets within 2 days and you've used less than half
 # of it, surface how much is still on the table — a heads-up to spend the
@@ -765,7 +922,13 @@ if [ "$cols" -lt 80 ]; then
     five_c=$(pct_color "$five_pct")
     week_c=$(pct_color "$week_pct")
 
-    line="${blue}${smodel}${reset}"
+    line=""
+    if [ -n "$me_label" ]; then
+        line="${white}${me_label}${reset}"
+        [ -n "$me_rule" ] && line+=" ${yellow}${me_rule}${reset}"
+        line+=" ${dim}·${reset} "
+    fi
+    line+="${blue}${smodel}${reset}"
     [ -n "$effort_label" ] && line+=" ${effort_color}${effort_label}${reset}"
     line+=" ${pct_c}${pct_used}%${reset} ${dim}~${cost_fmt}${reset}"
 
@@ -802,6 +965,17 @@ if [ "$cols" -lt 80 ]; then
             c_reset=$(fmt_reset "$c_reset")
             [ -n "$c_reset" ] && line+=" ${dim}${c_reset}${reset}"
         done <<< "$codex_limits"
+    fi
+    if [ -n "$others" ]; then
+        while IFS="$us" read -r o_label _ o_pct _; do
+            [ -z "$o_label" ] && continue
+            if [ "$o_pct" = "?" ]; then
+                line+=" ${dim}· ${o_label} ?${reset}"
+            else
+                line+=" ${dim}· ${o_label} ${reset}$(pct_color "$o_pct")${o_pct}%${reset}"
+            fi
+        done <<< "$others"
+        $pools_stale && line+=" ${yellow}(old)${reset}"
     fi
 
     printf "%b" "$line"
@@ -864,7 +1038,33 @@ if [ -n "$codex_limits" ]; then
     done <<< "$codex_limits"
 fi
 
+if [ -n "$me_label" ]; then
+    acct="${white}${me_label}${reset}"
+    [ -n "$me_rule" ] && acct+=" ${yellow}${me_rule}${reset}"
+    if [ -n "$line2" ]; then line2="${acct} ${dim}|${reset} ${line2}"; else line2="$acct"; fi
+fi
+
+# LINE 3: the other accounts from the pools file, headline window each
+line3=""
+if [ -n "$others" ]; then
+    while IFS="$us" read -r o_label o_rule o_pct o_iso; do
+        [ -z "$o_label" ] && continue
+        [ -n "$line3" ] && line3+=" ${dim}|${reset} "
+        line3+="${white}${o_label}${reset}"
+        [ -n "$o_rule" ] && line3+=" ${dim}(${o_rule})${reset}"
+        line3+=" $(pool_bar "$o_pct" 10)"
+        # Reset times only when wide enough to keep the line on one row.
+        if [ "$cols" -ge 130 ]; then
+            o_reset=$(fmt_reset "$o_iso")
+            [ -n "$o_reset" ] && line3+=" ${dim}${o_reset}${reset}"
+        fi
+    done <<< "$others"
+    o_age=$(pools_age_label)
+    [ -n "$o_age" ] && line3+=" ${dim}·${reset} ${o_age}"
+fi
+
 printf "%b" "$line1"
 [ -n "$line2" ] && printf "\n%b" "$line2"
+[ -n "$line3" ] && printf "\n%b" "$line3"
 
 exit 0

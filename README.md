@@ -49,6 +49,12 @@ and warm up (gold → amber → red) as you approach a limit.
   unused (e.g. `· 69% left before reset`)
 - Extra credits used / monthly cap (if enabled)
 - Clear upstream error indicator when the usage API is temporarily stuck
+- Which account this session is on, and its rule, when a pools file lists
+  your accounts (see [Other accounts](#other-accounts))
+
+**Line 3** — Other accounts (optional, needs a pools file)
+- Every other account's main limit, with time until reset (at 130+
+  columns), and how old the numbers are (flagged when over 3 hours old)
 
 ## Install
 
@@ -102,6 +108,52 @@ chmod +x ~/.claude/monclaude.sh
 - [`jq`](https://jqlang.github.io/jq/) — `brew install jq`
 - macOS or Linux
 - A Claude Pro, Max, or Team subscription (for usage data)
+
+## Other accounts
+
+A status line only sees its own session's account. If you juggle several
+(two Claude logins, Codex, Gemini, on several machines), let whatever already
+tracks them write one JSON file, and monclaude shows them all:
+
+```
+work ⎇ main | Opus 5.5 (1M context)  med  [▓▓ 20% ]  200k/1.0m  |  ~$3.21
+Personal | 7d [▓▓ 20% ] in 2d 6h | Fable [ 2% ] in 2d 6h
+Codex [▓▓▓ 35% ] in 3d 21h | Gemini [▓ 16% ] in 5d 10h | Work (client work only) [▓▓▓ 33% ] in 2d 3h · as of 17:22
+```
+
+monclaude only reads the file. It never logs in, probes or calls an API for
+these accounts, so renders stay fast. Default path
+`~/.config/monclaude/pools.json`; set `MONCLAUDE_POOLS` to move it or
+`MONCLAUDE_NO_POOLS=1` to ignore it.
+
+```json
+{
+  "as_of": "2026-11-22T22:22:57Z",
+  "pools": [
+    { "id": "1a2b3c4d", "label": "Personal", "kind": "claude", "rule": null,
+      "windows": [ { "name": "weekly", "used_pct": 20, "resets_at": "2026-11-25T05:00:00Z" } ] },
+    { "id": "5e6f7a8b", "label": "Work", "kind": "claude", "rule": "client work only",
+      "windows": [ { "name": "weekly", "used_pct": 33, "resets_at": "2026-11-25T02:00:00Z" } ] },
+    { "id": null, "label": "Gemini", "kind": "gemini", "rule": null,
+      "windows": [ { "name": "weekly", "used_pct": 16, "resets_at": "2026-11-28T09:05:21Z" } ] }
+  ]
+}
+```
+
+- `windows[0]` is the one shown. `resets_at` is ISO 8601 or Unix seconds.
+- `id` for a Claude account is the first 8 hex characters of the SHA-256 of
+  its email (`printf %s you@example.com | shasum -a 256 | cut -c1-8`).
+  monclaude hashes the email in `~/.claude.json` (or
+  `$CLAUDE_CONFIG_DIR/.claude.json`) the same way. The matching account is
+  this session's: its `label` and `rule` lead line 2, and it is left off
+  line 3. The email itself is never written anywhere.
+- `rule` is a short reminder of what an account is for. Leave it null if
+  any work may use it.
+- With `kind: "codex"` and a file under 3 hours old, the file's Codex
+  reading replaces the one from local Codex logs, which is only as new as
+  Codex's last turn on this machine.
+- `monclaude usage --json` adds `account` (`{id, label, rule}`) and `others`
+  (`[{label, kind, rule, utilization, resets_at}]`).
 
 ## How it works
 

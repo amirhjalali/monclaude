@@ -2,6 +2,18 @@
 
 All notable changes to `monclaude` will be documented here.
 
+## Unreleased
+
+- Other accounts: an optional pools file (`~/.config/monclaude/pools.json`,
+  or `MONCLAUDE_POOLS`) that lists all your accounts' limits. With it,
+  line 2 opens with the name and rule of the account this session is on
+  (matched by a hash of the email in `~/.claude.json`), and a third line
+  shows the other accounts' main limits and the file's age. Compact mode
+  adds the name first and the others' percentages last. `monclaude usage`
+  adds an `others:` line; `--json` adds `account` and `others`. While the
+  file is under 3 hours old, its Codex reading replaces the local-log one.
+  `MONCLAUDE_NO_POOLS=1` ignores the file. Nothing changes without one.
+
 ## 0.2.0 — 2026-11-03
 
 - Fixed usage numbers freezing when `/api/oauth/usage` returns
