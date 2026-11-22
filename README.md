@@ -106,6 +106,19 @@ chmod +x ~/.claude/monclaude.sh
 - macOS or Linux
 - A Claude Pro, Max, or Team subscription (for usage data)
 
+## One line
+
+`MONCLAUDE_LINES=1` puts everything on one line, as coloured percentages
+only (no bars, reset times or context gauge):
+
+```
+work | Op5.5 high ~$3.20 | Personal 20% · Fable 2% | Codex 35% · Gemini 17% · Work 33%
+```
+
+Session first, then this account's limits, then the other accounts. Set it
+in your status line command, e.g. `MONCLAUDE_LINES=1 ~/.claude/monclaude.sh`.
+Below 80 columns the usual compact line is used instead.
+
 ## Other accounts
 
 A status line only sees its own session's account. If you juggle several

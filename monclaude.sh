@@ -888,6 +888,64 @@ if [ -n "$usage" ]; then
 fi
 
 # ══════════════════════════════════════════════════════
+# ONE-LINE MODE (MONCLAUDE_LINES=1) — percentages only
+# events | Op5.5 high ~$3.20 | Claude 1 20% · Fable 2% | Codex 35% · Gemini 17%
+# Session, then this account, then the other accounts. Colour carries the
+# level (teal → gold → amber → red); no bars, no reset times.
+# ══════════════════════════════════════════════════════
+
+if [ "${MONCLAUDE_LINES:-}" = 1 ] && [ "$cols" -ge 80 ]; then
+    sep=" ${dim}|${reset} "
+    dot=" ${dim}·${reset} "
+    pc() { printf '%b' "$(pct_color "$1")$1%${reset}"; }
+    line=""
+    [ -n "$loc_folder" ] && [ "$cols" -ge 100 ] && line="${white}${loc_folder}${reset}${sep}"
+    line+="${blue}$(short_model "$model")${reset}"
+    [ -n "$effort_label" ] && line+=" ${effort_color}${effort_label}${reset}"
+    line+=" ${dim}~${cost_fmt}${reset}"     # no context %: limits matter more here
+
+    acct=""
+    if [ -n "$usage" ]; then
+        acct="${white}${me_label:-7d}${reset}"
+        [ -n "$me_rule" ] && acct+=" ${yellow}${me_rule}${reset}"
+        acct+=" $(pc "$week_pct")"
+        $five_known && acct+=" ${dim}5h${reset} $(pc "$five_pct")"
+        if [ -n "$scoped_limits" ]; then
+            while IFS=$'\t' read -r s_name s_pct _ _; do
+                [ -z "$s_name" ] && continue
+                acct+="${dot}${white}${s_name}${reset} $(pc "$s_pct")"
+            done <<< "$scoped_limits"
+        fi
+        [ "$extra_enabled" = "true" ] && acct+=" ${cyan}+\$${extra_used}${reset}"
+    elif $usage_error; then
+        acct="${yellow}usage api down${reset}"
+    fi
+    [ -n "$acct" ] && line+="${sep}${acct}"
+
+    rest=""
+    if [ -n "$codex_limits" ]; then
+        while IFS=$'\t' read -r c_name c_win c_pct _; do
+            [ -z "$c_name" ] && continue
+            [ -n "$rest" ] && rest+="$dot"
+            rest+="${white}${c_name}${reset} $(pc "$c_pct")"
+        done <<< "$codex_limits"
+    fi
+    if [ -n "$others" ]; then
+        while IFS="$us" read -r o_label _ o_pct _; do
+            [ -z "$o_label" ] && continue
+            [ -n "$rest" ] && rest+="$dot"
+            if [ "$o_pct" = "?" ]; then rest+="${white}${o_label}${reset} ${dim}?${reset}"
+            else rest+="${white}${o_label}${reset} $(pc "$o_pct")"; fi
+        done <<< "$others"
+        $pools_stale && rest+=" ${yellow}(old)${reset}"
+    fi
+    [ -n "$rest" ] && line+="${sep}${rest}"
+
+    printf "%b" "$line"
+    exit 0
+fi
+
+# ══════════════════════════════════════════════════════
 # COMPACT MODE (< 80 cols — phones, VPS, narrow panes)
 # One line, no bars — color-coded percentages
 # Op4.6 high 7% ~$2.25 · 5h 7% in 2h · 7d 9% in 4d
