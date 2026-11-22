@@ -2,7 +2,7 @@
 
 All notable changes to `monclaude` will be documented here.
 
-## Unreleased
+## 0.3.0 — 2026-11-22
 
 - Other accounts: an optional pools file (`~/.config/monclaude/pools.json`,
   or `MONCLAUDE_POOLS`) that lists all your accounts' limits. With it,
