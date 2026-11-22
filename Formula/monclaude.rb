@@ -1,8 +1,8 @@
 class Monclaude < Formula
   desc "Real-time status line for Claude Code"
   homepage "https://github.com/amirhjalali/monclaude"
-  url "https://github.com/amirhjalali/monclaude/archive/refs/tags/v0.2.0.tar.gz"
-  sha256 "bf03a79d8827e6e1b45a9938d01b6212551d95f8e31a0030a6108ad08df5ee16"
+  url "https://github.com/amirhjalali/monclaude/archive/refs/tags/v0.3.0.tar.gz"
+  sha256 "ac9ff6627d434eb0553d2c7a40e41b188e8c9fac4826c1c6a3af4169faf5b1a3"
   license "MIT"
 
   depends_on "jq"
