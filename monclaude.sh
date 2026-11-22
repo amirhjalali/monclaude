@@ -4,8 +4,7 @@
 #
 # Full mode (>= 80 cols):
 #   Line 1: [folder branch |] Model | context window bar | session cost
-#   Line 2: [account |] 5hr usage | weekly usage | extra credits
-#   Line 3: other accounts, when a pools file lists them (optional)
+#   Line 2: [account |] 5hr usage | weekly usage | extra credits [| other accounts]
 # Compact mode (< 80 cols — phones, narrow terminals):
 #   Single line: Model % cost · 5h % ↻reset · 7d % ↻reset
 #
@@ -347,28 +346,6 @@ pools_age_secs() {
     [ -z "$at" ] && return
     age=$(secs_until "$at")
     [ -n "$age" ] && printf '%d' "$(( -age ))"
-}
-
-# Bar for a pools reading; "?" (unknown) prints as a plain "?".
-pool_bar() {
-    case "$1" in
-        ''|*[!0-9]*) printf '%b' "${dim}[ ? ]${reset}" ;;
-        *) build_bar "$1" "$2" ;;
-    esac
-}
-
-# "as of 17:22" for the pools file, flagged when older than 3 hours.
-pools_age_label() {
-    local age hhmm epoch
-    age=$(pools_age_secs)
-    [ -z "$age" ] && return
-    epoch=$(( $(date +%s) - age ))
-    if $is_mac; then hhmm=$(date -r "$epoch" +%H:%M); else hhmm=$(date -d "@$epoch" +%H:%M); fi
-    if [ "$age" -gt "$pools_stale_secs" ]; then
-        printf '%b' "${yellow}as of ${hhmm} ($(( age / 3600 ))h old)${reset}"
-    else
-        printf '%b' "${dim}as of ${hhmm}${reset}"
-    fi
 }
 
 # ── Subcommands (agent-facing) ─────────────────────────
@@ -1013,12 +990,11 @@ if [ -n "$usage" ]; then
     [ -n "$week_delta" ] && line2+=" ${dim}+${week_delta}pp 5h${reset}"
     [ -n "$week_reset" ] && line2+=" ${dim}${week_reset}${reset}"
     [ -n "$week_nudge" ] && line2+=" ${nudge}· ${week_nudge}% left before reset${reset}"
+    # Per-model caps as a coloured percentage (no bar): they share the weekly reset.
     if [ -n "$scoped_limits" ]; then
-        while IFS=$'\t' read -r s_name s_pct s_iso _; do
+        while IFS=$'\t' read -r s_name s_pct _ _; do
             [ -z "$s_name" ] && continue
-            line2+=" ${dim}|${reset} ${white}${s_name}${reset} $(build_bar "$s_pct" 12)"
-            s_reset=$(fmt_reset "$s_iso")
-            [ -n "$s_reset" ] && line2+=" ${dim}${s_reset}${reset}"
+            line2+=" ${dim}·${reset} ${white}${s_name}${reset} $(pct_color "$s_pct")${s_pct}%${reset}"
         done <<< "$scoped_limits"
     fi
     if [ "$extra_enabled" = "true" ]; then
@@ -1032,7 +1008,7 @@ if [ -n "$codex_limits" ]; then
     while IFS=$'\t' read -r c_name c_win c_pct c_reset; do
         [ -z "$c_name" ] && continue
         [ -n "$line2" ] && line2+=" ${dim}|${reset} "
-        line2+="${white}${c_name} ${c_win}${reset} $(build_bar "$c_pct" 12)"
+        line2+="${white}${c_name} ${c_win}${reset} $(pct_color "$c_pct")${c_pct}%${reset}"
         c_reset=$(fmt_reset "$c_reset")
         [ -n "$c_reset" ] && line2+=" ${dim}${c_reset}${reset}"
     done <<< "$codex_limits"
@@ -1044,27 +1020,24 @@ if [ -n "$me_label" ]; then
     if [ -n "$line2" ]; then line2="${acct} ${dim}|${reset} ${line2}"; else line2="$acct"; fi
 fi
 
-# LINE 3: the other accounts from the pools file, headline window each
-line3=""
+# Other accounts (pools file): appended to line 2 as coloured percentages,
+# no bars or reset times, so the status line stays at two lines.
 if [ -n "$others" ]; then
-    while IFS="$us" read -r o_label o_rule o_pct o_iso; do
+    others_txt=""
+    while IFS="$us" read -r o_label _ o_pct _; do
         [ -z "$o_label" ] && continue
-        [ -n "$line3" ] && line3+=" ${dim}|${reset} "
-        line3+="${white}${o_label}${reset}"
-        [ -n "$o_rule" ] && line3+=" ${dim}(${o_rule})${reset}"
-        line3+=" $(pool_bar "$o_pct" 10)"
-        # Reset times only when wide enough to keep the line on one row.
-        if [ "$cols" -ge 130 ]; then
-            o_reset=$(fmt_reset "$o_iso")
-            [ -n "$o_reset" ] && line3+=" ${dim}${o_reset}${reset}"
+        [ -n "$others_txt" ] && others_txt+=" ${dim}·${reset} "
+        if [ "$o_pct" = "?" ]; then
+            others_txt+="${white}${o_label}${reset} ${dim}?${reset}"
+        else
+            others_txt+="${white}${o_label}${reset} $(pct_color "$o_pct")${o_pct}%${reset}"
         fi
     done <<< "$others"
-    o_age=$(pools_age_label)
-    [ -n "$o_age" ] && line3+=" ${dim}·${reset} ${o_age}"
+    $pools_stale && others_txt+=" ${yellow}(old)${reset}"
+    if [ -n "$line2" ]; then line2+=" ${dim}|${reset} ${others_txt}"; else line2="$others_txt"; fi
 fi
 
 printf "%b" "$line1"
 [ -n "$line2" ] && printf "\n%b" "$line2"
-[ -n "$line3" ] && printf "\n%b" "$line3"
 
 exit 0

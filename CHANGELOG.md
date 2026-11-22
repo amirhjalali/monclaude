@@ -2,6 +2,14 @@
 
 All notable changes to `monclaude` will be documented here.
 
+## 0.3.1 — 2026-11-22
+
+- Back to two lines. The other accounts from the pools file move to the end
+  of line 2 as coloured percentages (no bars, reset times or "as of" time;
+  `(old)` when the file is over 3 hours old). Per-model caps (e.g. Fable)
+  and the Codex gauge are coloured percentages too, so line 2 fits in about
+  90 columns.
+
 ## 0.3.0 — 2026-11-22
 
 - Other accounts: an optional pools file (`~/.config/monclaude/pools.json`,

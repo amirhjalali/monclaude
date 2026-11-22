@@ -20,7 +20,7 @@ It is a single shell script, so agents can install it, inspect it, and modify it
 
 ```
 monclaude ⎇ main | Opus 4.8 (1M context)  xhigh  [▓▓ 22% ]  220k/1.0m  |  ~$1.24
-5h [▓▓▓ 34% ] in 2h 6m  |  7d [▓▓ 31% ] in 1d 4h  |  Fable [▓ 17% ] in 1d 4h
+5h [▓▓▓ 34% ] in 2h 6m  |  7d [▓▓ 31% ] in 1d 4h · Fable 17%
 ```
 
 Each gauge is a compact bar with the percentage riding inside it, so the
@@ -49,12 +49,9 @@ and warm up (gold → amber → red) as you approach a limit.
   unused (e.g. `· 69% left before reset`)
 - Extra credits used / monthly cap (if enabled)
 - Clear upstream error indicator when the usage API is temporarily stuck
-- Which account this session is on, and its rule, when a pools file lists
-  your accounts (see [Other accounts](#other-accounts))
-
-**Line 3** — Other accounts (optional, needs a pools file)
-- Every other account's main limit, with time until reset (at 130+
-  columns), and how old the numbers are (flagged when over 3 hours old)
+- With a pools file (see [Other accounts](#other-accounts)): which account
+  this session is on and its rule first, and every other account's main
+  limit last, as coloured percentages (`(old)` when over 3 hours old)
 
 ## Install
 
@@ -117,9 +114,12 @@ tracks them write one JSON file, and monclaude shows them all:
 
 ```
 work ⎇ main | Opus 5.5 (1M context)  med  [▓▓ 20% ]  200k/1.0m  |  ~$3.21
-Personal | 7d [▓▓ 20% ] in 2d 6h | Fable [ 2% ] in 2d 6h
-Codex [▓▓▓ 35% ] in 3d 21h | Gemini [▓ 16% ] in 5d 10h | Work (client work only) [▓▓▓ 33% ] in 2d 3h · as of 17:22
+Personal | 7d [▓▓ 20% ] in 2d 5h · Fable 2% | Codex 35% · Gemini 17% · Work 33%
 ```
+
+Still two lines: the other accounts are coloured percentages at the end of
+line 2. In a session on the "Work" account, line 2 opens with
+`Work client work only` instead.
 
 monclaude only reads the file. It never logs in, probes or calls an API for
 these accounts, so renders stay fast. Default path
@@ -145,8 +145,8 @@ these accounts, so renders stay fast. Default path
   its email (`printf %s you@example.com | shasum -a 256 | cut -c1-8`).
   monclaude hashes the email in `~/.claude.json` (or
   `$CLAUDE_CONFIG_DIR/.claude.json`) the same way. The matching account is
-  this session's: its `label` and `rule` lead line 2, and it is left off
-  line 3. The email itself is never written anywhere.
+  this session's: its `label` and `rule` lead line 2, and it is left out of
+  the others. The email itself is never written anywhere.
 - `rule` is a short reminder of what an account is for. Leave it null if
   any work may use it.
 - With `kind: "codex"` and a file under 3 hours old, the file's Codex
