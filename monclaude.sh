@@ -889,31 +889,44 @@ fi
 
 # ══════════════════════════════════════════════════════
 # ONE-LINE MODE (MONCLAUDE_LINES=1) — percentages only
-# events | Op5.5 high ~$3.20 | Claude 1 20% · Fable 2% | Codex 35% · Gemini 17%
-# Session, then this account, then the other accounts. Colour carries the
-# level (teal → gold → amber → red); no bars, no reset times.
+# events | Op5.5 high | Claude 1 20% 2d5h · Fable 2% | Codex 35% 3d20h · Gemini 17% 5d9h
+# Session, then this account, then the other accounts: percentage coloured
+# by level (teal → gold → amber → red) and a short time until it resets.
 # ══════════════════════════════════════════════════════
 
 if [ "${MONCLAUDE_LINES:-}" = 1 ] && [ "$cols" -ge 80 ]; then
     sep=" ${dim}|${reset} "
     dot=" ${dim}·${reset} "
     pc() { printf '%b' "$(pct_color "$1")$1%${reset}"; }
+    # Time until reset, short: 2d5h, 5h, 40m (nothing if unknown or past).
+    rs() {
+        local d; d=$(secs_until "$1")
+        [ -z "$d" ] || [ "$d" -le 0 ] && return
+        if [ "$d" -ge 86400 ]; then printf '%b' " ${dim}$(( d / 86400 ))d$(( d % 86400 / 3600 ))h${reset}"
+        elif [ "$d" -ge 3600 ]; then printf '%b' " ${dim}$(( d / 3600 ))h${reset}"
+        else printf '%b' " ${dim}$(( d / 60 ))m${reset}"; fi
+    }
     line=""
     [ -n "$loc_folder" ] && [ "$cols" -ge 100 ] && line="${white}${loc_folder}${reset}${sep}"
     line+="${blue}$(short_model "$model")${reset}"
     [ -n "$effort_label" ] && line+=" ${effort_color}${effort_label}${reset}"
-    line+=" ${dim}~${cost_fmt}${reset}"     # no context %: limits matter more here
+    # No context gauge or cost here: in this mode only the limits matter.
 
     acct=""
     if [ -n "$usage" ]; then
         acct="${white}${me_label:-7d}${reset}"
         [ -n "$me_rule" ] && acct+=" ${yellow}${me_rule}${reset}"
-        acct+=" $(pc "$week_pct")"
-        $five_known && acct+=" ${dim}5h${reset} $(pc "$five_pct")"
+        acct+=" $(pc "$week_pct")$(rs "$week_reset_iso")"
+        $five_known && acct+=" ${dim}5h${reset} $(pc "$five_pct")$(rs "$five_reset_iso")"
         if [ -n "$scoped_limits" ]; then
-            while IFS=$'\t' read -r s_name s_pct _ _; do
+            while IFS=$'\t' read -r s_name s_pct s_iso _; do
                 [ -z "$s_name" ] && continue
                 acct+="${dot}${white}${s_name}${reset} $(pc "$s_pct")"
+                # A per-model cap usually resets with the week; only show its time if it differs.
+                s_d=$(secs_until "$s_iso"); w_d=$(secs_until "$week_reset_iso")
+                if [ -n "$s_d" ] && { [ -z "$w_d" ] || [ $(( s_d - w_d )) -gt 3600 ] || [ $(( w_d - s_d )) -gt 3600 ]; }; then
+                    acct+="$(rs "$s_iso")"
+                fi
             done <<< "$scoped_limits"
         fi
         [ "$extra_enabled" = "true" ] && acct+=" ${cyan}+\$${extra_used}${reset}"
@@ -924,18 +937,18 @@ if [ "${MONCLAUDE_LINES:-}" = 1 ] && [ "$cols" -ge 80 ]; then
 
     rest=""
     if [ -n "$codex_limits" ]; then
-        while IFS=$'\t' read -r c_name c_win c_pct _; do
+        while IFS=$'\t' read -r c_name c_win c_pct c_iso; do
             [ -z "$c_name" ] && continue
             [ -n "$rest" ] && rest+="$dot"
-            rest+="${white}${c_name}${reset} $(pc "$c_pct")"
+            rest+="${white}${c_name}${reset} $(pc "$c_pct")$(rs "$c_iso")"
         done <<< "$codex_limits"
     fi
     if [ -n "$others" ]; then
-        while IFS="$us" read -r o_label _ o_pct _; do
+        while IFS="$us" read -r o_label _ o_pct o_iso; do
             [ -z "$o_label" ] && continue
             [ -n "$rest" ] && rest+="$dot"
             if [ "$o_pct" = "?" ]; then rest+="${white}${o_label}${reset} ${dim}?${reset}"
-            else rest+="${white}${o_label}${reset} $(pc "$o_pct")"; fi
+            else rest+="${white}${o_label}${reset} $(pc "$o_pct")$(rs "$o_iso")"; fi
         done <<< "$others"
         $pools_stale && rest+=" ${yellow}(old)${reset}"
     fi

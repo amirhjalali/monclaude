@@ -9,9 +9,10 @@ All notable changes to `monclaude` will be documented here.
   `(old)` when the file is over 3 hours old). Per-model caps (e.g. Fable)
   and the Codex gauge are coloured percentages too, so line 2 fits in about
   90 columns.
-- `MONCLAUDE_LINES=1`: one line, percentages only, coloured by level:
-  folder, model, effort and cost, then this account's limits, then the
-  other accounts.
+- `MONCLAUDE_LINES=1`: one line. Folder, model and effort, then this
+  account's limits, then the other accounts, each as a percentage coloured
+  by level with a short time until it resets (`2d5h`). No bars, context
+  gauge or cost.
 
 ## 0.3.0 — 2026-11-22
 

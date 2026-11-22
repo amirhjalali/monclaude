@@ -108,14 +108,16 @@ chmod +x ~/.claude/monclaude.sh
 
 ## One line
 
-`MONCLAUDE_LINES=1` puts everything on one line, as coloured percentages
-only (no bars, reset times or context gauge):
+`MONCLAUDE_LINES=1` puts everything on one line: each limit as a
+percentage coloured by level, with a short time until it resets (no bars,
+context gauge or cost):
 
 ```
-work | Op5.5 high ~$3.20 | Personal 20% · Fable 2% | Codex 35% · Gemini 17% · Work 33%
+work | Op5.5 high | Personal 20% 2d5h · Fable 2% | Codex 35% 3d20h · Gemini 17% 5d9h · Work 33% 2d2h
 ```
 
-Session first, then this account's limits, then the other accounts. Set it
+Session first, then this account's limits, then the other accounts. A
+per-model cap shows its own reset time only when it differs from the week's. Set it
 in your status line command, e.g. `MONCLAUDE_LINES=1 ~/.claude/monclaude.sh`.
 Below 80 columns the usual compact line is used instead.
 
